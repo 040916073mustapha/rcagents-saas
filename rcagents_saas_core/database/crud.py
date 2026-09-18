@@ -224,8 +224,8 @@ def get_or_create_conversation(store_id, channel, platform_conversation_id, cust
                         import uuid
                         uid = str(uuid.uuid4())
                         conn.execute(
-                            text("INSERT INTO users (id, email, name, created_at, updated_at) VALUES (:id, :email, :name, :now, :now)"),
-                            {"id": uid, "email": "auto@rcagents.space", "name": "Auto User", "now": datetime.now()}
+                            text("INSERT INTO users (id, email, name, password_hash, plan, created_at, updated_at) VALUES (:id, :email, :name, :pwd, 'free', :now, :now)"),
+                            {"id": uid, "email": "auto@rcagents.space", "name": "Auto User", "pwd": "auto-seed-" + uid[:8], "now": datetime.now()}
                         )
                         user_r = (uid,)
                     conn.execute(

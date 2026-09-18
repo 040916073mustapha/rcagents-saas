@@ -257,8 +257,8 @@ def _seed_default_store(engine):
                     import uuid
                     default_user_id = str(uuid.uuid4())
                     conn.execute(
-                        text("INSERT INTO users (id, email, name, created_at, updated_at) VALUES (:id, :email, :name, :now, :now)"),
-                        {"id": default_user_id, "email": "admin@rcagents.space", "name": "RC Agents Admin", "now": datetime.now()}
+                        text("INSERT INTO users (id, email, name, password_hash, plan, created_at, updated_at) VALUES (:id, :email, :name, :pwd, 'free', :now, :now)"),
+                        {"id": default_user_id, "email": "admin@rcagents.space", "name": "RC Agents Admin", "pwd": "auto-seed-" + default_user_id[:8], "now": datetime.now()}
                     )
                     user_result = (default_user_id,)
                 _user_id = user_result[0]
