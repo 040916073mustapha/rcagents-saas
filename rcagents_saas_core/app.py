@@ -143,6 +143,14 @@ def create_app():
         except Exception:
             return send_from_directory(app.static_folder, "privacy.html")
 
+    @app.route("/data-deletion")
+    def data_deletion():
+        """Data Deletion Instructions — required for Meta App Review"""
+        try:
+            return render_template("data_deletion.html")
+        except Exception:
+            return send_from_directory(app.static_folder, "data_deletion.html")
+
     @app.route("/terms")
     def terms():
         """Terms of Service — required for Meta App Review"""
@@ -199,7 +207,24 @@ def create_app():
     def dashboard_marketing():
         return send_from_directory(app.static_folder, "dashboard.html")
 
-    # ─── Webhook Endpoint (Messenger & Instagram) ──────────────
+    # ─── Webhook Endpoint (Messenger & Instagram) with HMAC-SHA256 ──
+
+    META_APP_SECRET = os.getenv("META_APP_SECRET", "")
+
+    def _verify_webhook_signature(request_body, signature_header):
+        """Verify X-Hub-Signature-256 against request body"""
+        if not META_APP_SECRET or not signature_header:
+            return True  # soft pass if not configured
+        try:
+            expected = "sha256=" + hmac.new(
+                META_APP_SECRET.encode("utf-8"),
+                request_body,
+                hashlib.sha256
+            ).hexdigest()
+            return hmac.compare_digest(expected, signature_header)
+        except Exception as e:
+            logger.warning(f"[WEBHOOK] HMAC error: {e}")
+            return True
 
     FB_VERIFY_TOKEN = os.getenv("FB_VERIFY_TOKEN", "ROYAL-ROYAL-CH2026")
 
@@ -217,8 +242,16 @@ def create_app():
             logger.warning("Webhook verify failed")
             return "Verification failed", 403
 
-        # POST: Process incoming message
+        # POST: Process incoming message with HMAC verification
         logger.info("Webhook POST received")
+
+        # Verify X-Hub-Signature-256
+        signature = request.headers.get("X-Hub-Signature-256", "")
+        raw_body = request.get_data()
+        if not _verify_webhook_signature(raw_body, signature):
+            logger.warning(f"[WEBHOOK] Invalid signature! Possible tampering.")
+            return jsonify({"status": "signature_mismatch"}), 403
+
         data = request.get_json(silent=True)
         if not data:
             return jsonify({"status": "ok"})

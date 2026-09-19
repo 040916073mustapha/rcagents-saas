@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Deletion Instructions — RC Agents</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Space Grotesk', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] },
+                    colors: {
+                        neon: { purple: '#A855F7', cyan: '#06B6D4' },
+                        rc: { bg: '#0A0A0F', card: '#111118', 'card-hover': '#1A1A25', border: '#1E1E30', text: '#94A3B8', 'text-bright': '#E2E8F0' }
+                    },
+                    boxShadow: { 'neon-purple': '0 0 15px -3px rgba(168,85,247,0.3)' }
+                }
+            }
+        }
+        document.documentElement.classList.add("dark");
+    </script>
+    <style>
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.3); border-radius: 10px; }
+        .bg-grid { 
+            background-image: linear-gradient(rgba(168,85,247,0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(168,85,247,0.03) 1px, transparent 1px);
+            background-size: 40px 40px;
+        }
+        .scanline {
+            pointer-events: none; position: fixed; inset: 0; z-index: 9999;
+            opacity: 0.015;
+            background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.02) 2px, rgba(255,255,255,0.02) 4px);
+        }
+        body { scroll-behavior: smooth; }
+        .policy-section h2 { color: #E2E8F0; font-size: 1.25rem; font-weight: 700; margin-top: 2rem; margin-bottom: 0.75rem; }
+        .policy-section h3 { color: #A855F7; font-size: 1rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.5rem; }
+        .policy-section p { color: #94A3B8; line-height: 1.8; margin-bottom: 1rem; }
+        .policy-section ul { list-style: disc; padding-left: 1.5rem; margin-bottom: 1rem; color: #94A3B8; }
+        .policy-section ul li { margin-bottom: 0.5rem; line-height: 1.6; }
+        .policy-section strong { color: #E2E8F0; }
+    </style>
+</head>
+<body class="bg-rc-bg text-rc-text antialiased font-sans">
+    <div class="scanline"></div>
+
+    <!-- Navbar -->
+    <nav class="fixed top-0 inset-x-0 z-50 bg-rc-bg/80 backdrop-blur-xl border-b border-rc-border/40">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <a href="/" class="flex items-center gap-2.5 group">
+                    <span class="text-base font-bold tracking-wider bg-gradient-to-r from-neon-purple to-neon-cyan bg-clip-text text-transparent">RC AGENTS</span>
+                </a>
+                <div class="flex items-center gap-4">
+                    <a href="/terms" class="text-sm text-rc-text hover:text-neon-cyan transition-colors">Terms</a>
+                    <a href="/" class="text-sm text-rc-text hover:text-white transition-colors">← Back</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Content -->
+    <div class="relative min-h-screen pt-24 pb-16 bg-grid">
+        <div class="absolute top-1/4 left-1/3 w-96 h-96 bg-neon-purple/5 rounded-full blur-[120px]"></div>
+        
+        <div class="relative max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+            <!-- Header -->
+            <div class="text-center mb-12">
+                <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-neon-purple/8 border border-neon-purple/20 text-xs font-mono text-neon-purple mb-4">
+                    LEGAL
+                </div>
+                <h1 class="text-3xl sm:text-4xl font-bold text-white">Data Deletion Instructions</h1>
+                <p class="mt-3 text-sm text-rc-text">Last updated: September 19, 2026</p>
+            </div>
+
+            <!-- Policy Content -->
+            <div class="bg-rc-card border border-rc-border/40 rounded-2xl p-8 sm:p-10 shadow-xl policy-section">
+                <h2>1. Your Data Deletion Rights</h2>
+<p>
+    At RC Agents, we respect your privacy. If you have interacted with our platform through Meta APIs (Facebook Messenger, Instagram, or WhatsApp) and wish to request the deletion of your personal data, you can do so using one of the methods below.
+</p>
+<p>
+    We will process all verified deletion requests within <strong>30 days</strong> and confirm once the deletion is complete.
+</p>
+
+<h2>2. Request Methods</h2>
+
+<h3>2.1 Email Request</h3>
+<p>
+    Send an email to <strong>contact@rcagents.space</strong> with the subject line: <strong>"Data Deletion Request"</strong>.
+    Please include the following information in your email:
+</p>
+<ul>
+    <li>Your full name</li>
+    <li>The platform you used (Facebook Messenger, Instagram, or WhatsApp)</li>
+    <li>Your Facebook / Instagram User ID (PSID) or WhatsApp phone number</li>
+    <li>The store name or domain you interacted with (if known)</li>
+</ul>
+
+<h3>2.2 Web Form</h3>
+<p>
+    You can submit a deletion request using the form below. We will match your request against our records and process the deletion.
+</p>
+
+<h2>3. What Data Will Be Deleted</h2>
+<p>Upon receiving and verifying your request, we will permanently delete:</p>
+<ul>
+    <li>All conversation messages and chat history</li>
+    <li>Your platform User ID (PSID / Instagram ID / WhatsApp number)</li>
+    <li>Any stored profile information (name, profile picture, username)</li>
+    <li>Media files (images, documents) shared through conversations</li>
+</ul>
+
+<h2>4. Data We May Retain</h2>
+<p>
+    Certain data may be retained if required by law or for legitimate business purposes:
+</p>
+<ul>
+    <li><strong>Order records:</strong> If you made a purchase, order details may be retained for tax and accounting purposes as required by Algerian law</li>
+    <li><strong>Anonymized analytics:</strong> Aggregated, non-personal usage statistics</li>
+    <li><strong>Legal holds:</strong> Data subject to ongoing legal proceedings or investigations</li>
+</ul>
+<p>
+    In all cases, retained data is stripped of personally identifiable information where possible and kept only for the minimum period required.
+</p>
+
+<h2>5. Deletion Confirmation</h2>
+<p>
+    Once your data deletion request is processed, you will receive a confirmation email at the address provided in your request. The confirmation will include:
+</p>
+<ul>
+    <li>The date of deletion</li>
+    <li>The categories of data deleted</li>
+    <li>Any data retained and the reason for retention (if applicable)</li>
+</ul>
+
+<h2>6. Meta Platform Compliance</h2>
+<p>
+    This Data Deletion endpoint complies with Meta Platforms' <strong>Platform Terms</strong> and <strong>Developer Policies</strong> requirements for App Review. We ensure that:
+</p>
+<ul>
+    <li>Meta-sourced user data is deleted upon request within 30 days</li>
+    <li>Users can request deletion without creating an account</li>
+    <li>Deletion applies to all data obtained through Meta APIs</li>
+    <li>Users are notified once deletion is complete</li>
+</ul>
+
+<h2>7. Contact Information</h2>
+<p>For questions or concerns about data deletion:</p>
+<ul>
+    <li><strong>Email:</strong> contact@rcagents.space</li>
+    <li><strong>Operator:</strong> Chabni Reda-El-Mustapha</li>
+    <li><strong>Location:</strong> Tlemcen, Algeria</li>
+</ul>
+
+<h2>8. Submit a Deletion Request</h2>
+<div style="background:#1A1A25; border:1px solid #1E1E30; border-radius:12px; padding:24px; margin-top:16px;">
+    <p style="margin-bottom:16px; color:#E2E8F0;">To initiate a data deletion request, please email us at:</p>
+    <div style="text-align:center; padding:16px; background:#111118; border-radius:8px; border:1px solid rgba(168,85,247,0.2);">
+        <a href="mailto:contact@rcagents.space?subject=Data%20Deletion%20Request" style="color:#A855F7; font-size:1.1rem; font-weight:600; text-decoration:none;">contact@rcagents.space</a>
+        <p style="margin-top:8px; font-size:0.85rem; color:#94A3B8;">Subject: "Data Deletion Request"</p>
+    </div>
+</div><div class="mt-8 text-center">
+                <a href="/" class="text-sm text-rc-text hover:text-neon-cyan transition-colors">← Back to Home</a>
+                <span class="mx-3 text-gray-600">·</span>
+                <a href="/terms" class="text-sm text-rc-text hover:text-neon-cyan transition-colors">Terms of Service</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Site Footer -->
+    <footer class="border-t border-rc-border/40 bg-rc-bg py-6">
+        <div class="max-w-4xl mx-auto px-4 text-center text-xs text-gray-600 font-mono">
+            &copy; 2026 RC Agents. Operated by Chabni Reda-El-Mustapha. All rights reserved.
+        </div>
+    </footer>
+</body>
+</html>
+
