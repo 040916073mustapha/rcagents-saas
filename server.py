@@ -1014,7 +1014,7 @@ def process_whatsapp_entries(entries):
 
 
 # ????????? App Secret (for X-Hub-Signature-256 verification) ??????????????????????????????
-META_APP_SECRET = os.getenv("META_APP_SECRET", "")
+META_APP_SECRET = os.getenv("META_APP_SECRET", "").strip()
 
 
 def verify_webhook_signature(request_body, signature_header):
@@ -1022,15 +1022,28 @@ def verify_webhook_signature(request_body, signature_header):
     Verify X-Hub-Signature-256 header against request body using META_APP_SECRET.
     Returns True if valid or if signature/app_secret is not configured (soft fail).
     """
-    if not META_APP_SECRET or not signature_header:
-        return True  # soft pass if not configured
+    if not META_APP_SECRET or META_APP_SECRET.upper() in ("OFF", "DISABLED", "SKIP"):
+        return True  # soft pass if not configured or verification disabled
+    if not signature_header:
+        return True  # soft pass if no signature header (e.g. FB Messenger)
     try:
+        # Normalize signature header (strip whitespace/newlines)
+        sig_header = signature_header.strip()
+        if not sig_header.startswith("sha256="):
+            logger.warning(f"[WEBHOOK] Unexpected signature format: {sig_header[:30]}...")
+            return False
+
         expected_signature = "sha256=" + hmac.new(
             META_APP_SECRET.encode("utf-8"),
             request_body,
             hashlib.sha256
         ).hexdigest()
-        return hmac.compare_digest(expected_signature, signature_header)
+
+        # Case-insensitive comparison with stripped header
+        result = hmac.compare_digest(expected_signature.lower(), sig_header.lower())
+        if not result:
+            logger.warning(f"[WEBHOOK] SIG MISMATCH: expected={expected_signature[:50]}..., received={sig_header[:50]}...")
+        return result
     except Exception as e:
         logger.warning(f"[WEBHOOK] Signature verification error: {e}")
         return True  # soft pass on error to avoid breaking webhook
