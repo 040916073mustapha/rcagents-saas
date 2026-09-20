@@ -793,7 +793,7 @@ def generate_ai_reply(user_message, sender_id, image_url='', store_id=1):
             "max_tokens": 500,
             "temperature": 0.7
         }
-        resp = requests.post(AI_API_URL, json=payload, headers=headers, timeout=90)
+        resp = requests.post(AI_API_URL, json=payload, headers=headers, timeout=180)
         status_info = f"[AI] Response {resp.status_code} in {resp.elapsed.total_seconds():.1f}s"
         logger.info(status_info)
         logger.info(f"[AI] Response text (first 800): {resp.text[:800]}")
@@ -807,7 +807,25 @@ def generate_ai_reply(user_message, sender_id, image_url='', store_id=1):
         else:
             logger.error("AI API error: " + str(resp.status_code) + " " + resp.text[:2000])
     except requests.exceptions.Timeout:
-        logger.error(f"[AI] timeout after 90s â€” model={_model}")
+        logger.error(f"[AI] timeout after 180s â model={_model}, retrying fallback...")
+        # Retry with a lighter fallback model
+        try:
+            fb_model = "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"
+            if _model != fb_model and user_message:
+                logger.info(f"[AI] Fallback to {fb_model}")
+                fallback_payload = payload.copy()
+                fallback_payload["model"] = fb_model
+                fallback_payload["max_tokens"] = 200
+                fb_resp = requests.post(AI_API_URL, json=fallback_payload, headers=headers, timeout=120)
+                if fb_resp.status_code == 200:
+                    reply = fb_resp.json()["choices"][0]["message"]["content"].strip()
+                    if reply:
+                        add_to_conversation(sender_id, "user", user_message, store_id)
+                        add_to_conversation(sender_id, "assistant", reply, store_id)
+                        logger.info(f"[AI] Fallback reply sent ({len(reply)} chars)")
+                        return reply
+        except Exception as fb_e:
+            logger.warning(f"[AI] Fallback failed: {_safe_str(fb_e)}")
     except requests.exceptions.ConnectionError as ce:
         logger.error(f"[AI] CONNECTION ERROR: {ce}")
     except Exception as e:
