@@ -934,8 +934,14 @@ def send_ig_reply(sender_id, user_message, image_url='', store_id=1):
             payload = {"recipient": {"id": sender_id}, "message": {"text": reply_text}}
             headers = {"Content-Type": "application/json"}
             resp = requests.post(url, json=payload, headers=headers, timeout=10)
+            logger.info(f"[IG] /me/messages RESPONSE ({resp.status_code}): {resp.text[:1000]}")
             if resp.status_code == 200:
-                logger.info(f"[IG] /me/messages reply sent to {sender_id}: {reply_text[:60]}...")
+                try:
+                    _resp_json = resp.json()
+                    _msg_id = _resp_json.get("message_id", "N/A")
+                    logger.info(f"[IG] /me/messages reply sent to {sender_id} (msg_id={_msg_id}): {reply_text[:60]}...")
+                except:
+                    logger.info(f"[IG] /me/messages reply sent to {sender_id}: {reply_text[:60]}...")
             else:
                 err_body = resp.text[:500]
                 logger.warning(f"[IG] /me/messages failed ({resp.status_code}): {err_body}")
@@ -958,8 +964,9 @@ def send_ig_reply(sender_id, user_message, image_url='', store_id=1):
                                     "message": {"text": reply_text}
                                 }
                                 ig_resp = requests.post(ig_url, json=ig_payload, headers=headers, timeout=10)
+                                logger.info(f"[IG] Auto-discovered endpoint RESPONSE ({ig_resp.status_code}): {ig_resp.text[:1000]}")
                                 if ig_resp.status_code == 200:
-                                    logger.info(f"[IG] Reply sent via IG User ID {found_ig_id}: {reply_text[:60]}...")
+                                    logger.info(f"[IG] Reply sent via Auto-discovered IG ID {found_ig_id}: {reply_text[:60]}...")
                                     save_message_db("instagram", sender_id, user_message or "[Image]", reply_text, store_id)
                                     return
                                 else:
@@ -975,8 +982,14 @@ def send_ig_reply(sender_id, user_message, image_url='', store_id=1):
             }
             headers = {"Content-Type": "application/json"}
             resp = requests.post(url, json=payload, headers=headers, timeout=10)
+            logger.info(f"[IG] IG ID endpoint RESPONSE ({resp.status_code}): {resp.text[:1000]}")
             if resp.status_code == 200:
-                logger.info(f"[IG] Reply sent via IG User ID {ig_user_id}: {reply_text[:60]}...")
+                try:
+                    _resp_json = resp.json()
+                    _msg_id = _resp_json.get("message_id", "N/A")
+                    logger.info(f"[IG] Reply sent via IG User ID {ig_user_id} (msg_id={_msg_id}): {reply_text[:60]}...")
+                except:
+                    logger.info(f"[IG] Reply sent via IG User ID {ig_user_id}: {reply_text[:60]}...")
             else:
                 err_body = resp.text[:500]
                 logger.warning(f"[IG] send failed ({resp.status_code}): {err_body}")
