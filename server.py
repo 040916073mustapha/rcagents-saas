@@ -907,13 +907,13 @@ def send_ig_reply(sender_id, user_message, image_url='', store_id=1):
         reply_text = generate_ai_reply(user_message, sender_id, image_url, store_id)
 
         # Priority: Page Token (has IG Messaging permission)
-        page_token = get_fb_page_token()
+        page_token = get_fb_page_token(require_ig=True)
         if page_token:
             ig_token = page_token
-            logger.info("Using Page Token for Instagram reply")
+            logger.info("Using IG-capable Page Token for Instagram reply")
         else:
             ig_token = INSTAGRAM_ACCESS_TOKEN
-            logger.warning("No page token, trying INSTAGRAM_ACCESS_TOKEN")
+            logger.warning("No IG page token, trying INSTAGRAM_ACCESS_TOKEN")
 
         if not ig_token:
             logger.warning("No token available for Instagram reply")
