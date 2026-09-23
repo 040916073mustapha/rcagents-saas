@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Royal Chaussures - Cloud Server for Render
@@ -795,6 +795,8 @@ def generate_ai_reply(user_message, sender_id, image_url='', store_id=1):
         }
         resp = requests.post(AI_API_URL, json=payload, headers=headers, timeout=180)
         status_info = f"[AI] Response {resp.status_code} in {resp.elapsed.total_seconds():.1f}s"
+        
+        
         logger.info(status_info)
         logger.info(f"[AI] Response text (first 800): {resp.text[:800]}")
         if resp.status_code == 200:
@@ -804,10 +806,33 @@ def generate_ai_reply(user_message, sender_id, image_url='', store_id=1):
                 add_to_conversation(sender_id, "assistant", reply, store_id)
                 return reply
             logger.warning("Empty AI reply content")
+        elif resp.status_code == 429:
+            logger.error(f"[AI] 429 Model busy/overloaded on {_model}, switching to fallback...")
         else:
             logger.error("AI API error: " + str(resp.status_code) + " " + resp.text[:2000])
+
+        # ===== FALLBACK TRIGGER: 429 (busy) OR any non-200 =====
+        if resp.status_code != 200:
+            logger.info(f"[AI] Attempting fallback to 8B model (reason: HTTP {resp.status_code})")
+            try:
+                fb_model = "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"
+                if _model != fb_model and (user_message or image_url):
+                    logger.info(f"[AI] Fallback to {fb_model}")
+                    fb_payload = payload.copy()
+                    fb_payload["model"] = fb_model
+                    fb_payload["max_tokens"] = 200
+                    fb_resp = requests.post(AI_API_URL, json=fb_payload, headers=headers, timeout=120)
+                    if fb_resp.status_code == 200:
+                        reply = fb_resp.json()["choices"][0]["message"]["content"].strip()
+                        if reply:
+                            add_to_conversation(sender_id, "user", user_message, store_id)
+                            add_to_conversation(sender_id, "assistant", reply, store_id)
+                            logger.info(f"[AI] Fallback reply sent ({len(reply)} chars)")
+                            return reply
+            except Exception as fb_e:
+                logger.warning(f"[AI] Fallback failed: {_safe_str(fb_e)}")
     except requests.exceptions.Timeout:
-        logger.error(f"[AI] timeout after 180s â model={_model}, retrying fallback...")
+        logger.error(f"[AI] timeout after 180s — model={_model}, retrying fallback...")
         # Retry with a lighter fallback model
         try:
             fb_model = "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"
@@ -831,9 +856,6 @@ def generate_ai_reply(user_message, sender_id, image_url='', store_id=1):
     except Exception as e:
         logger.error("AI reply error: " + _safe_str(e))
     return "Merci de nous contacter! Nous reviendrons vers vous bientot."
-
-
-# ????????? Facebook Messenger Reply ?????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 
 def save_message_db(platform, sender_id, message, reply, store_id=1):
     """Save a message and its reply to the database for dashboard display"""
