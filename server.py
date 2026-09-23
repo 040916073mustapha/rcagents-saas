@@ -906,7 +906,7 @@ def send_ig_reply(sender_id, user_message, image_url='', store_id=1):
     try:
         reply_text = generate_ai_reply(user_message, sender_id, image_url, store_id)
 
-        # Priority: Page Token (has MESSAGING permission)
+        # Priority: Page Token (has IG Messaging permission)
         page_token = get_fb_page_token()
         if page_token:
             ig_token = page_token
@@ -920,26 +920,85 @@ def send_ig_reply(sender_id, user_message, image_url='', store_id=1):
             save_message_db("instagram", sender_id, user_message or "[Image]", "[No token]", store_id)
             return
 
-        # Instagram DMs use /me/messages with a Page Token
-        url = f"https://graph.facebook.com/v18.0/me/messages?access_token={ig_token}"
-        payload = {"recipient": {"id": sender_id}, "message": {"text": reply_text}}
-        headers = {"Content-Type": "application/json"}
-        resp = requests.post(url, json=payload, headers=headers, timeout=10)
-        if resp.status_code == 200:
-            logger.info(f"IG reply sent to {sender_id}: {reply_text[:60]}...")
+        # ===== Instagram DM: CORRECT ENDPOINT =====
+        # Meta v22.0 Instagram API: POST /{ig-user-id}/messages
+        # sender_id here is the Instagram User ID (scoped ID) from webhook
+        # We need the IG User ID from the Page's connected Instagram account
+        ig_user_id = os.getenv("INSTAGRAM_USER_ID", "")
+        logger.info(f"[IG] Using IG User ID: {ig_user_id}, sender: {sender_id}")
+
+        if not ig_user_id:
+            # Fallback: try old /me/messages endpoint
+            logger.warning("[IG] INSTAGRAM_USER_ID not set, falling back to /me/messages")
+            url = f"https://graph.facebook.com/v22.0/me/messages?access_token={ig_token}"
+            payload = {"recipient": {"id": sender_id}, "message": {"text": reply_text}}
+            headers = {"Content-Type": "application/json"}
+            resp = requests.post(url, json=payload, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                logger.info(f"[IG] /me/messages reply sent to {sender_id}: {reply_text[:60]}...")
+            else:
+                err_body = resp.text[:500]
+                logger.warning(f"[IG] /me/messages failed ({resp.status_code}): {err_body}")
+                # Try getting IG User ID automatically from Page
+                try:
+                    logger.info("[IG] Attempting to discover IG User ID from Page...")
+                    disc_url = f"https://graph.facebook.com/v22.0/me/accounts?access_token={ig_token}&fields=instagram_business_account"
+                    disc_resp = requests.get(disc_url, timeout=10)
+                    if disc_resp.status_code == 200:
+                        accounts_data = disc_resp.json().get("data", [])
+                        for acct in accounts_data:
+                            ig_biz = acct.get("instagram_business_account", {})
+                            if ig_biz and ig_biz.get("id"):
+                                found_ig_id = ig_biz["id"]
+                                logger.warning(f"[IG] FOUND IG User ID: {found_ig_id}. Set INSTAGRAM_USER_ID={found_ig_id} in .env!")
+                                # Try again with correct endpoint
+                                ig_url = f"https://graph.facebook.com/v22.0/{found_ig_id}/messages?access_token={ig_token}"
+                                ig_payload = {
+                                    "recipient": {"id": sender_id},
+                                    "message": {"text": reply_text}
+                                }
+                                ig_resp = requests.post(ig_url, json=ig_payload, headers=headers, timeout=10)
+                                if ig_resp.status_code == 200:
+                                    logger.info(f"[IG] Reply sent via IG User ID {found_ig_id}: {reply_text[:60]}...")
+                                    save_message_db("instagram", sender_id, user_message or "[Image]", reply_text, store_id)
+                                    return
+                                else:
+                                    logger.warning(f"[IG] Auto IG ID also failed ({ig_resp.status_code}): {ig_resp.text[:300]}")
+                except Exception as disc_e:
+                    logger.warning(f"[IG] Auto-discovery failed: {_safe_str(disc_e)}")
         else:
-            err_body = resp.text[:300]
-            logger.warning(f"IG send failed ({resp.status_code}): {err_body}")
-            if 'does not exist' in err_body or 'capability' in err_body.lower():
-                logger.info("Instagram reply needs 'Instagram Graph API' product.")
-                logger.info("Fix: Add Instagram Graph API in Meta Developer App.")
-        logger.info(f"[DB] Attempting to save IG msg from {sender_id[:20]}...")
+            # Correct Instagram DM endpoint with proper IG User ID
+            url = f"https://graph.facebook.com/v22.0/{ig_user_id}/messages?access_token={ig_token}"
+            payload = {
+                "recipient": {"id": sender_id},
+                "message": {"text": reply_text}
+            }
+            headers = {"Content-Type": "application/json"}
+            resp = requests.post(url, json=payload, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                logger.info(f"[IG] Reply sent via IG User ID {ig_user_id}: {reply_text[:60]}...")
+            else:
+                err_body = resp.text[:500]
+                logger.warning(f"[IG] send failed ({resp.status_code}): {err_body}")
+                # If message_id error, it means sender_id is an IG Sender PSID, try /me/messages
+                if "does not exist" in err_body or "message_id" in err_body:
+                    logger.info("[IG] Trying /me/messages fallback...")
+                    url2 = f"https://graph.facebook.com/v22.0/me/messages?access_token={ig_token}"
+                    payload2 = {"recipient": {"id": sender_id}, "message": {"text": reply_text}}
+                    resp2 = requests.post(url2, json=payload2, headers=headers, timeout=10)
+                    if resp2.status_code == 200:
+                        logger.info(f"[IG] /me/messages fallback worked: {reply_text[:60]}...")
+                    else:
+                        logger.warning(f"[IG] /me/messages fallback also failed ({resp2.status_code}): {resp2.text[:300]}")
+
+        logger.info(f"[DB] Saving IG msg from {sender_id[:20] if sender_id else 'unknown'}...")
         save_message_db("instagram", sender_id, user_message or "[Image]", reply_text, store_id)
-        logger.info(f"[DB] Successfully saved IG msg from {sender_id[:20]}")
+        logger.info(f"[DB] Saved IG msg from {sender_id[:20] if sender_id else 'unknown'}")
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
         logger.error(f"send_ig_reply error: {_safe_str(e)}")
+        logger.error(f"send_ig_reply traceback:\n{tb}")
         logger.error(f"send_ig_reply traceback:\n{tb}")
 # ????????? WhatsApp Reply ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 
