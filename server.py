@@ -372,6 +372,8 @@ FB_PAGE_ID = os.getenv("FB_PAGE_ID", "")
 FB_VERIFY_TOKEN = os.getenv("FB_VERIFY_TOKEN", "ROYAL-ROYAL-CH2026")
 
 INSTAGRAM_ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN", "")
+FB_PAGE_TOKEN = os.getenv("FB_PAGE_TOKEN", "")
+INSTAGRAM_USER_ID = os.getenv("INSTAGRAM_USER_ID", "")
 
 WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
@@ -907,10 +909,10 @@ def send_ig_reply(sender_id, user_message, image_url='', store_id=1):
         reply_text = generate_ai_reply(user_message, sender_id, image_url, store_id)
 
         # Priority: Page Token (has IG Messaging permission)
-        page_token = get_fb_page_token(require_ig=True)
+        page_token = FB_PAGE_TOKEN or get_fb_page_token(require_ig=True)
         if page_token:
             ig_token = page_token
-            logger.info("Using IG-capable Page Token for Instagram reply")
+            logger.info("Using FB_PAGE_TOKEN for Instagram reply")
         else:
             ig_token = INSTAGRAM_ACCESS_TOKEN
             logger.warning("No IG page token, trying INSTAGRAM_ACCESS_TOKEN")
@@ -924,7 +926,7 @@ def send_ig_reply(sender_id, user_message, image_url='', store_id=1):
         # Meta v22.0 Instagram API: POST /{ig-user-id}/messages
         # sender_id here is the Instagram User ID (scoped ID) from webhook
         # We need the IG User ID from the Page's connected Instagram account
-        ig_user_id = os.getenv("INSTAGRAM_USER_ID", "")
+        ig_user_id = INSTAGRAM_USER_ID
         logger.info(f"[IG] Using IG User ID: {ig_user_id}, sender: {sender_id}")
 
         if not ig_user_id:
