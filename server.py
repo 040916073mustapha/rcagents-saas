@@ -908,15 +908,17 @@ def send_ig_reply(sender_id, user_message, image_url='', store_id=1):
     try:
         reply_text = generate_ai_reply(user_message, sender_id, image_url, store_id)
 
-        # Page Access Token (from Messenger from Meta) - works for Instagram DMs
-        # When using a Page Access Token, Instagram requires:
-        #   POST /{instagram_account_id}/messages
-        # NOT /me/messages (which routes to Facebook Messenger)
-        page_token = FB_PAGE_TOKEN or get_fb_page_token()
+        # 🔥 Dynamic Page Token: get a fresh Page Access Token from System User Token
+        # This is the proven v2.3 strategy that worked on 11 September.
+        # FB_SYSTEM_USER_TOKEN must have `pages_show_list` + `pages_read_engagement` + `instagram_basic` + `instagram_manage_messages` + `pages_manage_metadata`
+        # get_fb_page_token() calls: GET /v18.0/me/accounts?access_token={FB_SYSTEM_USER_TOKEN}
+        page_token = get_fb_page_token()
         if not page_token:
-            logger.warning("[IG] No Page Token available for Instagram reply")
-            save_message_db("instagram", sender_id, user_message or "[Image]", "[No token]", store_id)
+            logger.warning("[IG] get_fb_page_token() returned no token (FB_SYSTEM_USER_TOKEN may be invalid)")
+            save_message_db("instagram", sender_id, user_message or "[Image]", "[No token from System User]", store_id)
             return
+
+        logger.info(f"[IG] Page Token obtained dynamically from FB_SYSTEM_USER_TOKEN: {page_token[:20]}...")
 
         ig_account_id = INSTAGRAM_USER_ID
         if not ig_account_id:
@@ -924,32 +926,42 @@ def send_ig_reply(sender_id, user_message, image_url='', store_id=1):
             save_message_db("instagram", sender_id, user_message or "[Image]", "[No IG account ID]", store_id)
             return
 
-        logger.info(f"[IG] Using endpoint /{ig_account_id}/messages for Instagram reply")
+        logger.info(f"[IG] Endpoint: POST /{ig_account_id}/messages")
 
-        # ===== Instagram DM: CORRECT ENDPOINT =====
+        # ===== Instagram DM via Dynamic Page Token =====
         # Meta Instagram API: POST /{ig-account-id}/messages
-        # sender_id = Instagram User PSID from webhook
-        # access_token = Facebook Page Access Token (linked to this Instagram account)
+        # sender_id = Instagram User PSID from webhook (saved in messages table)
+        # access_token = Dynamic Page Token obtained from System User via get_fb_page_token()
         headers = {"Content-Type": "application/json"}
         url = f"https://graph.facebook.com/v22.0/{ig_account_id}/messages?access_token={page_token}"
         payload = {
             "recipient": {"id": sender_id},
             "message": {"text": reply_text}
         }
-        logger.info(f"[IG] Sending to /{ig_account_id}/messages (token prefix: {page_token[:15]}...)")
+        logger.info(f"[IG] Request to /{ig_account_id}/messages (token prefix: {page_token[:15]}...)")
         resp = requests.post(url, json=payload, headers=headers, timeout=10)
-        logger.info(f"[IG] RESPONSE ({resp.status_code}): {resp.text[:1000]}")
+        resp_text = resp.text[:1500]
+        logger.info(f"[IG] RESPONSE ({resp.status_code}): {resp_text}")
 
         if resp.status_code == 200:
             try:
                 _resp_json = resp.json()
                 _msg_id = _resp_json.get("message_id", "N/A")
-                logger.info(f"[IG] Reply sent via /{ig_account_id}/messages (msg_id={_msg_id}): {reply_text[:60]}...")
+                logger.info(f"[IG] ✅ Reply sent via /{ig_account_id}/messages (msg_id={_msg_id}): {reply_text[:60]}...")
             except:
-                logger.info(f"[IG] Reply sent via /{ig_account_id}/messages: {reply_text[:60]}...")
+                logger.info(f"[IG] ✅ Reply sent via /{ig_account_id}/messages: {reply_text[:60]}...")
         else:
-            err_body = resp.text[:500]
-            logger.warning(f"[IG] /{ig_account_id}/messages failed ({resp.status_code}): {err_body}")
+            err_body = resp_text
+            logger.warning(f"[IG] ❌ /{ig_account_id}/messages failed ({resp.status_code}): {err_body}")
+
+            # If endpoint fails, try /me/messages fallback (some tokens work this way)
+            if "does not exist" in err_body or "capability" in err_body.lower():
+                logger.info("[IG] Trying /me/messages fallback...")
+                url2 = f"https://graph.facebook.com/v22.0/me/messages?access_token={page_token}"
+                resp2 = requests.post(url2, json=payload, headers=headers, timeout=10)
+                logger.info(f"[IG] /me/messages fallback RESPONSE ({resp2.status_code}): {resp2.text[:500]}")
+                if resp2.status_code == 200:
+                    logger.info(f"[IG] ✅ /me/messages fallback worked: {reply_text[:60]}...")
 
         logger.info(f"[DB] Saving IG msg from {sender_id[:20] if sender_id else 'unknown'}...")
         save_message_db("instagram", sender_id, user_message or "[Image]", reply_text, store_id)
