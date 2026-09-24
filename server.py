@@ -371,8 +371,8 @@ FB_SYSTEM_USER_TOKEN = os.getenv("FB_SYSTEM_USER_TOKEN", "")
 FB_PAGE_ID = os.getenv("FB_PAGE_ID", "")
 FB_VERIFY_TOKEN = os.getenv("FB_VERIFY_TOKEN", "ROYAL-ROYAL-CH2026")
 
-INSTAGRAM_ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN", "IGAAZACELFZBaVRBZAFlzNFhKU29BMV8yY1hMUHJOVzRuNUFXbVVDWVVNMGd5ZATlxSkJkdXBoVFQxbE5TWl9Xb2FHS3pYWGplMUtBMjRROGF6a0JNYnplakxHSEJmM0NzMlVrMHE4dTVIWkdFQjN5SjVDeXA4TG1KNWVMbW9xcFlTQQZDZD")
-FB_PAGE_TOKEN = os.getenv("FB_PAGE_TOKEN", "IGAAZACELFZBaVRBZAFlzNFhKU29BMV8yY1hMUHJOVzRuNUFXbVVDWVVNMGd5ZATlxSkJkdXBoVFQxbE5TWl9Xb2FHS3pYWGplMUtBMjRROGF6a0JNYnplakxHSEJmM0NzMlVrMHE4dTVIWkdFQjN5SjVDeXA4TG1KNWVMbW9xcFlTQQZDZD")
+INSTAGRAM_ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN", "EAASvxCcZCEgkBSsZBKofX0seGNEY0EiGon0btOVpMEcUA9099HfhfZCrHwDFNsWq3N9tZBzedSqgtHGjraDABulzZBjZBYaiIytOyFY5i6K6tqbZBgZAZCltrdOC940DvW1oaS6ZBt7gNmlqP42aU3Y6n9tcvZCOGj2aZB3yYSPM7s3WILXrkYjpHMi832uAw82QtkDIKRUZCMYtfIAP2bH7ZBYf5wrwZDZD")
+FB_PAGE_TOKEN = os.getenv("FB_PAGE_TOKEN", "EAASvxCcZCEgkBSsZBKofX0seGNEY0EiGon0btOVpMEcUA9099HfhfZCrHwDFNsWq3N9tZBzedSqgtHGjraDABulzZBjZBYaiIytOyFY5i6K6tqbZBgZAZCltrdOC940DvW1oaS6ZBt7gNmlqP42aU3Y6n9tcvZCOGj2aZB3yYSPM7s3WILXrkYjpHMi832uAw82QtkDIKRUZCMYtfIAP2bH7ZBYf5wrwZDZD")
 INSTAGRAM_USER_ID = os.getenv("INSTAGRAM_USER_ID", "")
 
 WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
@@ -908,14 +908,15 @@ def send_ig_reply(sender_id, user_message, image_url='', store_id=1):
     try:
         reply_text = generate_ai_reply(user_message, sender_id, image_url, store_id)
 
-        # Priority: Page Token (has IG Messaging permission)
-        page_token = FB_PAGE_TOKEN or get_fb_page_token(require_ig=True)
-        if page_token:
-            ig_token = page_token
-            logger.info("Using FB_PAGE_TOKEN for Instagram reply")
+        # Instagram Token: use the dedicated IG Access Token (from Instagram API Setup)
+        # This token comes from Instagram App permissions, not Page token
+        ig_token = INSTAGRAM_ACCESS_TOKEN or FB_PAGE_TOKEN
+        if ig_token:
+            logger.info("[IG] Using INSTAGRAM_ACCESS_TOKEN for Instagram reply")
         else:
-            ig_token = INSTAGRAM_ACCESS_TOKEN
-            logger.warning("No IG page token, trying INSTAGRAM_ACCESS_TOKEN")
+            logger.warning("No token available for Instagram reply")
+            save_message_db("instagram", sender_id, user_message or "[Image]", "[No token]", store_id)
+            return
 
         if not ig_token:
             logger.warning("No token available for Instagram reply")
