@@ -300,6 +300,9 @@ def create_app():
     _WA_PHONE_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
     _META_API = "https://graph.facebook.com/v21.0"
 
+    # ─── Deduplication set (tracks processed message mids) ──
+    __processed_mids = set()
+
     # ─── Startup Environment Validation ────────────────────
     _missing_env = []
     if not _FB_PAGE_TOKEN:
@@ -446,6 +449,16 @@ def create_app():
             for messaging in entry.get("messaging", []):
                 sid = messaging.get("sender", {}).get("id", "")
                 msg_data = messaging.get("message", {})
+                # Deduplicate by message.mid
+                mid = msg_data.get("mid", "")
+                if mid:
+                    if mid in __processed_mids:
+                        logger.info(f"[DEDUP] Skipping duplicate mid={mid[:20]}...")
+                        continue
+                    __processed_mids.add(mid)
+                # Keep set bounded (prevent memory leak)
+                if len(__processed_mids) > 2000:
+                    __processed_mids.clear()
                 text = msg_data.get("text", "") or ""
                 image_url = ""
                 attachments = msg_data.get("attachments", [])
@@ -485,6 +498,13 @@ def create_app():
                     logger.info(f"[MT] No store for WA phone {phone_id}, falling back to store_id=1")
                     store_id = "1"
                 for msg in value.get("messages", []):
+                    # Deduplicate WhatsApp by wamid
+                    wamid = msg.get("id", "")
+                    if wamid:
+                        if wamid in __processed_mids:
+                            logger.info(f"[DEDUP] WA skipping duplicate wamid={wamid[:20]}...")
+                            continue
+                        __processed_mids.add(wamid)
                     sender = msg.get("from", "")
                     text = (msg.get("text") or {}).get("body", "") or ""
                     img = msg.get("image") or {}
