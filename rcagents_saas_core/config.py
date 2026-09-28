@@ -36,7 +36,8 @@ class Config:
     AI_API_KEY = os.getenv("AI_API_KEY", "")
     AI_MODEL = os.getenv("AI_MODEL", "openai/deepseek-ai/DeepSeek-V4-Flash")
     AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "4096"))
-    AI_TIMEOUT = int(os.getenv("AI_TIMEOUT", "30"))
+    AI_TIMEOUT = int(os.getenv("AI_TIMEOUT", "60"))
+    AI_FALLBACK_MODEL = os.getenv("AI_FALLBACK_MODEL", "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo")
 
     # ─── Meta Platforms ──────────────────────────────────────
     META_APP_SECRET = os.getenv("META_APP_SECRET", "")

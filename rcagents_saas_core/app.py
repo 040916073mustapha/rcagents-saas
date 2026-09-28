@@ -304,20 +304,29 @@ def create_app():
         """Core: call AIEngine, save reply, return reply text or None"""
         from .ai.engine import AIEngine
         ai = AIEngine(store_id)
+        ai_reply = None
         try:
             ai_reply = ai.send_request(user_text, image_url)
-            if not ai_reply:
-                ai_reply = "عذراً، لدينا بعض المشاكل التقنية حالياً. يمكنك التواصل معنا على الرقم +213659832426 🙏"
+        except Exception as e:
+            logger.error(f"[AI] Engine error for store {store_id}: {e}")
+        finally:
+            ai.close()
+
+        # Fallback reply if AI failed or timed out
+        if not ai_reply:
+            ai_reply = "عذراً، لدينا بعض المشاكل التقنية حالياً. يمكنك التواصل معنا على الرقم +213659832426 🙏"
+            logger.info(f"[AI] Using fallback reply for {platform}/{sender_id[:20]}")
+
+        # Save to DB inside try/except so a DB error never blocks sending
+        try:
             from .database.crud import get_or_create_conversation, save_message
             conv = get_or_create_conversation(store_id, channel_type, sender_id, customer_platform_id=sender_id)
             save_message(conv.id, store_id, "assistant", ai_reply, channel_type, "text")
-            logger.info(f"[AI] Reply sent to {platform}/{sender_id[:20]}: '{ai_reply[:80]}...' store={store_id}")
-            return ai_reply
         except Exception as e:
-            logger.error(f"[AI] Engine error for store {store_id}: {e}")
-            return None
-        finally:
-            ai.close()
+            logger.error(f"[DB] Failed to save message for {platform}/{sender_id[:20]}: {e}")
+
+        logger.info(f"[AI] Reply ready for {platform}/{sender_id[:20]}: '{ai_reply[:80]}...' store={store_id}")
+        return ai_reply
 
     def _send_fb_reply_ai(sender_id, text, image_url, store_id):
         """Messenger: AI reply + send via Graph API"""

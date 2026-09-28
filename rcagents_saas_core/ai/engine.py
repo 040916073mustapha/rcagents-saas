@@ -5,6 +5,7 @@ Routes AI requests per store with custom system prompts
 
 import json
 import logging
+import os
 import time
 
 import requests as http_requests
@@ -176,9 +177,7 @@ class AIEngine:
         }
 
     def send_request(self, user_message: str, image_url: str = None) -> str | None:
-        """Send request to AI API and return response text"""
-        payload = self.build_payload(user_message, image_url)
-
+        """Send request to AI API with fallback model support"""
         api_key = Config.AI_API_KEY
         if not api_key:
             logger.error("[AI] No API key configured")
@@ -189,28 +188,62 @@ class AIEngine:
             "Content-Type": "application/json",
         }
 
-        # DeepInfra endpoint
         api_url = "https://api.deepinfra.com/v1/openai/chat/completions"
+        payload = self.build_payload(user_message, image_url)
 
-        logger.info(f"[AI] Sending to {payload['model']} | store={self.store_id} | msg_len={len(user_message or '')}")
+        models_to_try = [
+            (payload["model"], "primary"),
+        ]
 
-        try:
-            start = time.time()
-            resp = http_requests.post(api_url, headers=headers, json=payload, timeout=Config.AI_TIMEOUT)
-            elapsed = time.time() - start
-            logger.info(f"[AI] Response {resp.status_code} in {elapsed:.1f}s")
+        # Only add fallback if it differs from primary
+        fallback_model = os.getenv("AI_FALLBACK_MODEL", "")
+        if fallback_model and fallback_model != payload["model"]:
+            models_to_try.append((fallback_model, "fallback"))
 
-            if resp.status_code == 200:
-                data = resp.json()
-                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                return content
-            else:
-                logger.error(f"[AI] Error {resp.status_code}: {resp.text[:500]}")
-                return None
+        last_error = None
 
-        except Exception as e:
-            logger.error(f"[AI] Exception: {str(e)}")
-            return None
+        for model_name, model_label in models_to_try:
+            # Rebuild payload with this model
+            trial_payload = dict(payload)
+            trial_payload["model"] = model_name
+            # Shorter timeout for fallback (text-only, faster models)
+            timeout_sec = Config.AI_TIMEOUT if model_label == "primary" else 45
+            # Remove image for fallback if it had one (fallback models may not support vision)
+            if model_label == "fallback" and image_url:
+                msgs = []
+                for m in trial_payload.get("messages", []):
+                    if isinstance(m.get("content"), list):
+                        # Strip image_url from list content, keep only text
+                        text_parts = [c for c in m["content"] if c.get("type") == "text"]
+                        m["content"] = text_parts if text_parts else [{"type": "text", "text": "Describe the product in this image"}]
+                    msgs.append(m)
+                trial_payload["messages"] = msgs
+
+            try:
+                start = time.time()
+                logger.info(f"[AI] Sending to {model_name} ({model_label}) | store={self.store_id} | timeout={timeout_sec}s")
+                resp = http_requests.post(api_url, headers=headers, json=trial_payload, timeout=timeout_sec)
+                elapsed = time.time() - start
+                logger.info(f"[AI] {model_name} Response {resp.status_code} in {elapsed:.1f}s")
+
+                if resp.status_code == 200:
+                    data = resp.json()
+                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    return content
+                else:
+                    err_text = resp.text[:300]
+                    logger.error(f"[AI] {model_name} Error {resp.status_code}: {err_text}")
+                    last_error = f"HTTP {resp.status_code}: {err_text}"
+                    continue  # Try next model
+
+            except Exception as e:
+                logger.error(f"[AI] {model_name} Exception: {str(e)}")
+                last_error = str(e)
+                continue  # Try next model
+
+        # All models failed
+        logger.error(f"[AI] All models failed for store {self.store_id}. Last error: {last_error}")
+        return None
 
     def close(self):
         """Close DB session"""
