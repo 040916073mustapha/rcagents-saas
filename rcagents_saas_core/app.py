@@ -449,6 +449,10 @@ def create_app():
             for messaging in entry.get("messaging", []):
                 sid = messaging.get("sender", {}).get("id", "")
                 msg_data = messaging.get("message", {})
+                # ─── Skip echo (bot's own replies) ───────────────
+                if msg_data.get("is_echo", False):
+                    logger.info(f"[ECHO] Skipping echo message from {sid[:20]} (bot's own reply)")
+                    continue
                 # Deduplicate by message.mid
                 mid = msg_data.get("mid", "")
                 if mid:
@@ -505,6 +509,9 @@ def create_app():
                             logger.info(f"[DEDUP] WA skipping duplicate wamid={wamid[:20]}...")
                             continue
                         __processed_mids.add(wamid)
+                    # ─── Skip WA echo from bot own number ─────────
+                    if msg.get("statuses") or msg.get("errors") or msg.get("context", {}).get("from", "") == _WA_PHONE_ID or msg.get("from", "") == _WA_PHONE_ID:
+                        continue
                     sender = msg.get("from", "")
                     text = (msg.get("text") or {}).get("body", "") or ""
                     img = msg.get("image") or {}
