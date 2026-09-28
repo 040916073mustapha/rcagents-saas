@@ -368,7 +368,9 @@ def create_app():
             logger.error(f"[FB] Send error: {e}")
 
     def _send_ig_reply_ai(sender_id, text, image_url, store_id):
-        """Instagram: AI reply + send via Graph API with response logging"""
+        """Instagram: AI reply + send via Graph API with response logging.
+        Uses /me/messages (Page Access Token) — the same endpoint as FB Messenger.
+        Instagram DM replies are routed through the Page, not the IG Business Account ID."""
         reply = _call_ai_and_save(store_id, sender_id, text, image_url, "instagram", "IG")
         if not reply:
             logger.error(f"[IG] No reply text to send to {sender_id[:20]}")
@@ -377,13 +379,9 @@ def create_app():
             logger.error(f"[IG] FACEBOOK_PAGE_ACCESS_TOKEN is empty — cannot send")
             return
         try:
-            ig_id = os.getenv("INSTAGRAM_BUSINESS_ID", "")
-            if not ig_id:
-                logger.error(f"[IG] INSTAGRAM_BUSINESS_ID is empty — cannot send")
-                return
-            logger.info(f"[IG] Sending to {sender_id[:20]} via IG Business ID {ig_id[:10]}...")
+            logger.info(f"[IG] Sending to {sender_id[:20]} via /me/messages (Page Token)...")
             resp = _http.post(
-                f"{_META_API}/{ig_id}/messages",
+                f"{_META_API}/me/messages",
                 params={"access_token": _FB_PAGE_TOKEN},
                 json={"recipient": {"id": sender_id}, "message": {"text": reply[:2000]}},
                 timeout=15
