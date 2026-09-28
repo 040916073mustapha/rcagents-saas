@@ -329,48 +329,77 @@ def create_app():
         return ai_reply
 
     def _send_fb_reply_ai(sender_id, text, image_url, store_id):
-        """Messenger: AI reply + send via Graph API"""
+        """Messenger: AI reply + send via Graph API with response logging"""
         reply = _call_ai_and_save(store_id, sender_id, text, image_url, "messenger", "FB")
-        if reply and _FB_PAGE_TOKEN:
-            try:
-                _http.post(
-                    f"{_META_API}/me/messages",
-                    params={"access_token": _FB_PAGE_TOKEN},
-                    json={"recipient": {"id": sender_id}, "message": {"text": reply[:2000]}},
-                    timeout=10
-                )
-            except Exception as e:
-                logger.error(f"[FB] Send error: {e}")
+        if not reply:
+            logger.error(f"[FB] No reply text to send to {sender_id[:20]}")
+            return
+        if not _FB_PAGE_TOKEN:
+            logger.error(f"[FB] FACEBOOK_PAGE_ACCESS_TOKEN is empty — cannot send")
+            return
+        try:
+            logger.info(f"[FB] Sending to {sender_id[:20]}...")
+            resp = _http.post(
+                f"{_META_API}/me/messages",
+                params={"access_token": _FB_PAGE_TOKEN},
+                json={"recipient": {"id": sender_id}, "message": {"text": reply[:2000]}},
+                timeout=15
+            )
+            logger.info(f"[FB] Response {resp.status_code}: {resp.text[:200]}")
+            if resp.status_code != 200:
+                logger.error(f"[FB] Meta API error: {resp.status_code} {resp.text[:300]}")
+        except Exception as e:
+            logger.error(f"[FB] Send error: {e}")
 
     def _send_ig_reply_ai(sender_id, text, image_url, store_id):
-        """Instagram: AI reply + send via Graph API"""
+        """Instagram: AI reply + send via Graph API with response logging"""
         reply = _call_ai_and_save(store_id, sender_id, text, image_url, "instagram", "IG")
-        if reply and _FB_PAGE_TOKEN:
-            try:
-                ig_id = os.getenv("INSTAGRAM_BUSINESS_ID", "")
-                if ig_id:
-                    _http.post(
-                        f"{_META_API}/{ig_id}/messages",
-                        params={"access_token": _FB_PAGE_TOKEN},
-                        json={"recipient": {"id": sender_id}, "message": {"text": reply[:2000]}},
-                        timeout=10
-                    )
-            except Exception as e:
-                logger.error(f"[IG] Send error: {e}")
+        if not reply:
+            logger.error(f"[IG] No reply text to send to {sender_id[:20]}")
+            return
+        if not _FB_PAGE_TOKEN:
+            logger.error(f"[IG] FACEBOOK_PAGE_ACCESS_TOKEN is empty — cannot send")
+            return
+        try:
+            ig_id = os.getenv("INSTAGRAM_BUSINESS_ID", "")
+            if not ig_id:
+                logger.error(f"[IG] INSTAGRAM_BUSINESS_ID is empty — cannot send")
+                return
+            logger.info(f"[IG] Sending to {sender_id[:20]} via IG Business ID {ig_id[:10]}...")
+            resp = _http.post(
+                f"{_META_API}/{ig_id}/messages",
+                params={"access_token": _FB_PAGE_TOKEN},
+                json={"recipient": {"id": sender_id}, "message": {"text": reply[:2000]}},
+                timeout=15
+            )
+            logger.info(f"[IG] Response {resp.status_code}: {resp.text[:200]}")
+            if resp.status_code != 200:
+                logger.error(f"[IG] Meta API error: {resp.status_code} {resp.text[:300]}")
+        except Exception as e:
+            logger.error(f"[IG] Send error: {e}")
 
     def _send_wa_reply_ai(sender_id, text, image_url, store_id):
-        """WhatsApp: AI reply + send via Graph API"""
+        """WhatsApp: AI reply + send via Graph API with response logging"""
         reply = _call_ai_and_save(store_id, sender_id, text, image_url, "whatsapp", "WA")
-        if reply and _WA_TOKEN and _WA_PHONE_ID:
-            try:
-                _http.post(
-                    f"{_META_API}/{_WA_PHONE_ID}/messages",
-                    headers={"Authorization": f"Bearer {_WA_TOKEN}"},
-                    json={"messaging_product": "whatsapp", "to": sender_id, "text": {"body": reply[:4096]}},
-                    timeout=10
-                )
-            except Exception as e:
-                logger.error(f"[WA] Send error: {e}")
+        if not reply:
+            logger.error(f"[WA] No reply text to send to {sender_id[:20]}")
+            return
+        if not _WA_TOKEN or not _WA_PHONE_ID:
+            logger.error(f"[WA] Missing token or phone ID — cannot send")
+            return
+        try:
+            logger.info(f"[WA] Sending to {sender_id[:20]}...")
+            resp = _http.post(
+                f"{_META_API}/{_WA_PHONE_ID}/messages",
+                headers={"Authorization": f"Bearer {_WA_TOKEN}"},
+                json={"messaging_product": "whatsapp", "to": sender_id, "text": {"body": reply[:4096]}},
+                timeout=15
+            )
+            logger.info(f"[WA] Response {resp.status_code}: {resp.text[:200]}")
+            if resp.status_code != 200:
+                logger.error(f"[WA] Meta API error: {resp.status_code} {resp.text[:300]}")
+        except Exception as e:
+            logger.error(f"[WA] Send error: {e}")
 
     # ─── Multi-Tenant Webhook Processors ─────────────────────
 
