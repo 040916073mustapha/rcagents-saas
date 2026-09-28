@@ -300,6 +300,22 @@ def create_app():
     _WA_PHONE_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
     _META_API = "https://graph.facebook.com/v21.0"
 
+    # ─── Startup Environment Validation ────────────────────
+    _missing_env = []
+    if not _FB_PAGE_TOKEN:
+        _missing_env.append("FACEBOOK_PAGE_ACCESS_TOKEN")
+    if not _WA_TOKEN:
+        _missing_env.append("WHATSAPP_ACCESS_TOKEN")
+    if not _WA_PHONE_ID:
+        _missing_env.append("WHATSAPP_PHONE_NUMBER_ID")
+    ig_id_check = os.getenv("INSTAGRAM_BUSINESS_ID", "")
+    if not ig_id_check:
+        _missing_env.append("INSTAGRAM_BUSINESS_ID")
+    if _missing_env:
+        logger.warning(f"⚠️ STARTUP: Missing env vars — {', '.join(_missing_env)}. Bot replies will FAIL for these channels!")
+    else:
+        logger.info("✅ STARTUP: All Meta env vars present (FB, WA, IG)")
+
     def _call_ai_and_save(store_id, sender_id, user_text, image_url, channel_type, platform):
         """Core: call AIEngine, save reply, return reply text or None"""
         from .ai.engine import AIEngine
