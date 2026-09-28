@@ -368,7 +368,8 @@ def create_app():
     from .database.crud import get_store_id_by_platform as _saas_get_store_id, get_store_id_by_whatsapp_phone as _saas_get_store_wa, get_or_create_conversation, save_message
 
     def _get_store_id_from_entry(entry, channel_type):
-        """Extract store_id from webhook entry based on channel type"""
+        """Extract store_id from webhook entry based on channel type.
+        Falls back to store_id='1' for legacy single-store setup (Royal Chaussures)."""
         entry_id = entry.get("id", "")
         if entry_id:
             try:
@@ -377,7 +378,9 @@ def create_app():
                     return sid
             except Exception:
                 pass
-        return None
+        # Fallback to default store (Royal Chaussures) for single-tenant legacy mode
+        logger.info(f"[MT] No channel registered for {channel_type}/{entry_id}, falling back to store_id=1")
+        return "1"
 
     def _process_messaging_multi(entries, platform, send_func):
         """Multi-tenant: process Messenger/Instagram messages with store_id lookup"""
@@ -427,8 +430,8 @@ def create_app():
                     except Exception:
                         pass
                 if not store_id:
-                    logger.warning(f"[MT] No store for WA phone {phone_id}, skipping")
-                    continue
+                    logger.info(f"[MT] No store for WA phone {phone_id}, falling back to store_id=1")
+                    store_id = "1"
                 for msg in value.get("messages", []):
                     sender = msg.get("from", "")
                     text = (msg.get("text") or {}).get("body", "") or ""
