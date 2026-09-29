@@ -820,7 +820,9 @@ def create_app():
             base = db.query(Conversation).filter(Conversation.store_id == store_id)
             if platform:
                 base = base.filter(Conversation.channel == platform)
+            logger.info(f"[MESSAGES] Query: store_id={store_id} platform={platform} limit={limit}")
             conversations = base.order_by(Conversation.updated_at.desc()).limit(limit).all()
+            logger.info(f"[MESSAGES] Found {len(conversations)} conversations")
 
             result = []
             for conv in conversations:
@@ -862,10 +864,13 @@ def create_app():
         try:
             from .database.models import Message, get_global_session
             db = get_global_session()
+            logger.info(f"[MESSAGES] Fetching: store={store_id} conv={conv_id}")
+            # Use only conversation_id (unique identifier) — store_id filter may fail due to type mismatch
             messages = db.query(Message).filter(
-                Message.conversation_id == conv_id,
-                Message.store_id == store_id
+                Message.conversation_id == conv_id
             ).order_by(Message.created_at.asc()).limit(100).all()
+
+            logger.info(f"[MESSAGES] Found {len(messages)} messages for conv={conv_id}")
 
             result = []
             for m in messages:
@@ -885,6 +890,41 @@ def create_app():
         except Exception as e:
             logger.error(f"[MESSAGES] Conversation messages error: {e}")
             return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route("/api/conversations/<store_id>/<conv_id>/messages/raw", methods=["GET"])
+    def api_conversation_messages_raw(store_id, conv_id):
+        """Debug: Return raw conversation and messages info"""
+        try:
+            from .database.models import Conversation, Message, get_global_session
+            db = get_global_session()
+            conv = db.query(Conversation).filter(
+                Conversation.id == conv_id,
+                Conversation.store_id == store_id
+            ).first()
+            msgs = db.query(Message).filter(
+                Message.conversation_id == conv_id
+            ).order_by(Message.created_at.asc()).limit(100).all()
+            db.close()
+            return jsonify({
+                "success": True,
+                "conv_exists": conv is not None,
+                "conv": {
+                    "id": conv.id if conv else None,
+                    "store_id": conv.store_id if conv else None,
+                    "channel": conv.channel if conv else None,
+                    "message_count": conv.message_count if conv else 0,
+                    "customer_name": conv.customer_name if conv else None,
+                    "customer_platform_id": conv.customer_platform_id if conv else None,
+                } if conv else None,
+                "messages_count": len(msgs),
+                "first_message": {
+                    "id": msgs[0].id,
+                    "role": msgs[0].role,
+                    "content": msgs[0].content[:100] if msgs[0].content else "",
+                } if msgs else None,
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
     @app.route("/api/profile", methods=["GET"])
     def api_profile():
