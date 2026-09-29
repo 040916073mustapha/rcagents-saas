@@ -245,20 +245,248 @@
     </template>
 </div>
 
-<!-- AGENTS SECTION -->
-<div x-show="activeNav === 'agents'">
+<!-- ============================================================ -->
+<!-- AI AGENTS SECTION — System Prompt Editor -->
+<!-- ============================================================ -->
+<div x-show="activeNav === 'agents'"
+     x-data="{
+        agents: [],
+        loading: true,
+        saving: false,
+        error: '',
+        success: '',
+        
+        // Modal state
+        modalOpen: false,
+        editingAgent: null,
+        editingPrompt: '',
+        
+        async fetchAgents() {
+            this.loading = true;
+            this.error = '';
+            try {
+                const r = await fetch('/api/agents/prompts?store_id=1');
+                const d = await r.json();
+                if (d.success) {
+                    this.agents = d.agents;
+                } else {
+                    this.error = d.error || 'Failed to load agents';
+                }
+            } catch(e) {
+                this.error = 'Network error loading agents';
+            }
+            this.loading = false;
+        },
+        
+        openEditor(agent) {
+            this.editingAgent = agent;
+            this.editingPrompt = agent.prompt || '';
+            this.modalOpen = true;
+            this.error = '';
+            this.success = '';
+        },
+        
+        closeEditor() {
+            this.modalOpen = false;
+            this.editingAgent = null;
+            this.editingPrompt = '';
+        },
+        
+        async savePrompt() {
+            if (!this.editingAgent) return;
+            this.saving = true;
+            this.error = '';
+            this.success = '';
+            try {
+                const r = await fetch('/api/agents/prompts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        store_id: 1,
+                        agent_type: this.editingAgent.type,
+                        prompt_text: this.editingPrompt
+                    })
+                });
+                const d = await r.json();
+                if (d.success) {
+                    this.success = '✅ Prompt saved: ' + this.editingAgent.name;
+                    // Update local copy
+                    const idx = this.agents.findIndex(a => a.type === this.editingAgent.type);
+                    if (idx !== -1) this.agents[idx].prompt = this.editingPrompt;
+                } else {
+                    this.error = d.error || 'Failed to save';
+                }
+            } catch(e) {
+                this.error = 'Network error saving prompt';
+            }
+            this.saving = false;
+        },
+        
+        agentColorClass(color) {
+            const map = {
+                'purple': 'bg-neon-purple/10 border-neon-purple/20 text-neon-purple',
+                'cyan': 'bg-neon-cyan/10 border-neon-cyan/20 text-neon-cyan',
+                'blue': 'bg-blue-400/10 border-blue-400/20 text-blue-400',
+                'pink': 'bg-neon-pink/10 border-neon-pink/20 text-neon-pink',
+                'emerald': 'bg-emerald-400/10 border-emerald-400/20 text-emerald-400',
+                'amber': 'bg-amber-400/10 border-amber-400/20 text-amber-400',
+                'rose': 'bg-rose-400/10 border-rose-400/20 text-rose-400'
+            };
+            return map[color] || 'bg-gray-400/10 border-gray-400/20 text-gray-400';
+        },
+        
+        promptPreview(prompt) {
+            if (!prompt) return 'Default prompt — click Edit to customize';
+            return prompt.substring(0, 100) + (prompt.length > 100 ? '...' : '');
+        },
+        
+        init() {
+            this.fetchAgents();
+        }
+     }"
+     x-init="init()">
+
+    <!-- Header -->
     <div class="flex items-center justify-between mb-6">
         <div>
             <h1 class="text-xl font-bold text-white">🤖 AI Agents</h1>
-            <p class="text-xs text-gray-500 mt-1 font-mono">Manage your 6 intelligent agents</p>
+            <p class="text-xs text-gray-500 mt-1 font-mono">Configure system prompts for each AI agent</p>
         </div>
-        <a href="/dashboard?view=agents" class="text-xs font-mono text-neon-purple">Refresh</a>
+        <div class="flex items-center gap-3">
+            <button @click="fetchAgents()" class="text-xs font-mono text-neon-purple hover:text-neon-cyan transition-colors">
+                <i class="fa-solid fa-rotate mr-1"></i> Refresh
+            </button>
+            <span class="text-[10px] font-mono text-gray-500" x-text="agents.length + ' agents'"></span>
+        </div>
     </div>
-    <div class="bg-rc-card border border-rc-border/60 rounded-xl p-6 text-center py-10">
-        <i class="fa-solid fa-network-wired text-4xl text-rc-border mb-4"></i>
-        <p class="text-gray-400 text-sm">Loading Agents Dashboard...</p>
-        <p class="text-gray-600 text-xs font-mono mt-1">Full agent management: <a href="/dashboard?view=agents" class="text-neon-purple hover:underline">/dashboard?view=agents</a></p>
+
+    <!-- Error / Success -->
+    <template x-if="error">
+        <div class="bg-rose-400/10 border border-rose-400/30 rounded-xl p-3 mb-4 flex items-center gap-2.5">
+            <i class="fa-solid fa-circle-exclamation text-rose-400"></i>
+            <p class="text-xs text-rose-300" x-text="error"></p>
+        </div>
+    </template>
+    <template x-if="success">
+        <div class="bg-emerald-400/10 border border-emerald-400/30 rounded-xl p-3 mb-4 flex items-center gap-2.5">
+            <i class="fa-solid fa-check-circle text-emerald-400"></i>
+            <p class="text-xs text-emerald-300" x-text="success"></p>
+        </div>
+    </template>
+
+    <!-- Loading -->
+    <div x-show="loading" class="py-16 text-center">
+        <div class="inline-flex items-center gap-3 text-gray-500">
+            <i class="fa-solid fa-circle-notch text-neon-purple text-xl animate-spin"></i>
+            <span class="text-sm font-mono tracking-wider">LOADING AGENTS...</span>
+        </div>
     </div>
+
+    <!-- Agents Grid -->
+    <template x-if="!loading">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <template x-for="agent in agents" :key="agent.type">
+                <div class="bg-rc-card border border-rc-border/60 rounded-xl p-5 card-hover-glow transition-all duration-300 relative overflow-hidden group">
+                    <!-- Header -->
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center gap-2.5">
+                            <div class="w-10 h-10 rounded-xl flex items-center justify-center border" :class="agentColorClass(agent.color)">
+                                <i :class="agent.icon" class="text-sm"></i>
+                            </div>
+                            <div>
+                                <h3 class="text-sm font-semibold text-white" x-text="agent.name"></h3>
+                                <p class="text-[10px] font-mono text-gray-500 flex items-center gap-1">
+                                    <span class="capitalize" x-text="agent.type.replace(/_/g, ' ')"></span>
+                                </p>
+                            </div>
+                        </div>
+                        <span class="text-lg" x-text="agent.emoji"></span>
+                    </div>
+
+                    <!-- Prompt Preview -->
+                    <div class="bg-rc-bg border border-rc-border/40 rounded-lg p-3 mb-3 min-h-[60px]">
+                        <p class="text-[11px] text-gray-400 leading-relaxed" x-text="promptPreview(agent.prompt)"></p>
+                    </div>
+
+                    <!-- Edit Button -->
+                    <button @click="openEditor(agent)"
+                            class="w-full flex items-center justify-center gap-2 bg-rc-card-hover/50 border border-rc-border/40 rounded-lg py-2.5 text-xs font-medium text-gray-300 hover:bg-neon-purple/10 hover:border-neon-purple/30 hover:text-neon-purple transition-all duration-200 group/btn">
+                        <i class="fa-solid fa-pen-to-square text-[11px]"></i>
+                        <span>Edit System Prompt</span>
+                    </button>
+
+                    <!-- Status indicator -->
+                    <div class="absolute top-3 right-3 w-1.5 h-1.5 rounded-full"
+                         :class="agent.prompt ? 'bg-emerald-400' : 'bg-gray-600'">
+                    </div>
+                </div>
+            </template>
+        </div>
+    </template>
+
+    <!-- ============ PROMPT EDITOR MODAL ============ -->
+    <template x-if="modalOpen">
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.7); backdrop-filter: blur(4px);">
+            <div class="bg-rc-card border border-rc-border/60 rounded-xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl shadow-neon-purple/10 overflow-hidden"
+                 @click.away="closeEditor()">
+                
+                <!-- Modal Header -->
+                <div class="flex items-center justify-between p-5 border-b border-rc-border/40 shrink-0">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl flex items-center justify-center border" :class="agentColorClass(editingAgent.color)">
+                            <i :class="editingAgent.icon" class="text-sm"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-base font-bold text-white" x-text="'Edit: ' + editingAgent.name"></h3>
+                            <p class="text-[10px] font-mono text-gray-500">System Prompt — affects how the AI responds</p>
+                        </div>
+                    </div>
+                    <button @click="closeEditor()" class="w-8 h-8 rounded-lg bg-rc-card-hover border border-rc-border/40 flex items-center justify-center text-gray-400 hover:text-white hover:border-rose-400/30 transition-colors">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+
+                <!-- Modal Body -->
+                <div class="p-5 flex-1 overflow-y-auto sidebar-scroll">
+                    <div class="mb-3 flex items-center justify-between">
+                        <label class="text-xs font-semibold text-gray-300">System Prompt</label>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[10px] font-mono text-gray-600" x-text="editingPrompt.length + ' chars'"></span>
+                            <button @click="editingPrompt = editingAgent.prompt || ''" class="text-[10px] font-mono text-gray-500 hover:text-neon-cyan transition-colors">
+                                <i class="fa-solid fa-rotate-left mr-0.5"></i> Reset
+                            </button>
+                        </div>
+                    </div>
+                    <textarea x-model="editingPrompt"
+                              class="w-full bg-rc-bg border border-rc-border/50 rounded-lg p-4 text-sm text-gray-200 font-mono leading-relaxed focus:outline-none focus:border-neon-purple/50 transition-colors resize-y"
+                              rows="16"
+                              placeholder="Enter system prompt for this agent..."></textarea>
+                    <p class="text-[10px] font-mono text-gray-600 mt-2 flex items-center gap-1.5">
+                        <i class="fa-solid fa-info-circle text-neon-cyan"></i>
+                        Changes take effect immediately on the next AI response.
+                    </p>
+                </div>
+
+                <!-- Modal Footer -->
+                <div class="flex items-center justify-end gap-3 p-4 border-t border-rc-border/40 shrink-0">
+                    <button @click="closeEditor()"
+                            class="px-4 py-2 rounded-lg border border-rc-border/40 text-xs font-mono text-gray-400 hover:text-white hover:border-gray-500/50 transition-colors">
+                        Cancel
+                    </button>
+                    <button @click="savePrompt()"
+                            :disabled="saving"
+                            class="px-5 py-2 rounded-lg bg-gradient-to-r from-neon-purple to-neon-cyan text-xs font-semibold text-white transition-all duration-200 hover:shadow-[0_0_15px_-3px_rgba(168,85,247,0.4)] disabled:opacity-50 disabled:cursor-not-allowed">
+                        <template x-if="!saving">
+                            <span><i class="fa-solid fa-floppy-disk mr-1.5"></i> Save Prompt</span>
+                        </template>
+                        <template x-if="saving">
+                            <span><i class="fa-solid fa-circle-notch animate-spin mr-1.5"></i> Saving...</span>
+                        </template>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </template>
 </div>
 
 <!-- ORDERS SECTION -->
@@ -426,17 +654,298 @@
     </template>
 </div>
 
-<!-- CHAT SECTION -->
-<div x-show="activeNav === 'chat'">
+<!-- ============================================================ -->
+<!-- LIVE CHAT SECTION — Customer Conversations -->
+<!-- ============================================================ -->
+<div x-show="activeNav === 'chat'"
+     x-data="{
+        conversations: [],
+        loading: true,
+        selectedConv: null,
+        searchQuery: '',
+        platformFilter: '',
+        autoRefresh: null,
+        
+        async fetchMessages() {
+            try {
+                const r = await fetch('/api/messages?limit=200&store_id=1');
+                const d = await r.json();
+                if (!d.success) return;
+                
+                // Group by conversation (sender_id + platform)
+                const convMap = {};
+                for (const m of d.messages) {
+                    const key = m.sender_id + '|' + m.platform;
+                    if (!convMap[key]) {
+                        convMap[key] = {
+                            sender_id: m.sender_id,
+                            platform: m.platform,
+                            name: m.sender_name || m.sender_id,
+                            messages: [],
+                            lastTime: m.created_at,
+                            lastMsg: m.message || m.reply || '',
+                        };
+                    }
+                    convMap[key].messages.push(m);
+                    if (m.created_at > convMap[key].lastTime) {
+                        convMap[key].lastTime = m.created_at;
+                        convMap[key].lastMsg = m.message || m.reply || '';
+                    }
+                }
+                
+                // Sort by latest activity first
+                this.conversations = Object.values(convMap).sort((a, b) => 
+                    new Date(b.lastTime) - new Date(a.lastTime)
+                );
+                
+                // Fetch names for conversations
+                this.fetchNames();
+            } catch(e) {
+                console.error('fetch messages error:', e);
+            }
+            this.loading = false;
+        },
+        
+        async fetchNames() {
+            for (const conv of this.conversations) {
+                if (conv.name === conv.sender_id && ['messenger','instagram'].includes(conv.platform)) {
+                    try {
+                        const r = await fetch('/api/profile?sender_id=' + conv.sender_id + '&platform=' + conv.platform);
+                        const d = await r.json();
+                        if (d.success && d.name) conv.name = d.name;
+                    } catch(e) {}
+                }
+            }
+        },
+        
+        selectConversation(conv) {
+            this.selectedConv = conv;
+        },
+        
+        backToList() {
+            this.selectedConv = null;
+        },
+        
+        platformIcon(platform) {
+            const icons = {
+                messenger: 'fa-brands fa-facebook-messenger text-blue-400',
+                instagram: 'fa-brands fa-instagram text-[#E1306C]',
+                whatsapp: 'fa-brands fa-whatsapp text-emerald-400',
+                telegram: 'fa-brands fa-telegram text-sky-400'
+            };
+            return icons[platform] || 'fa-solid fa-comment text-gray-400';
+        },
+        
+        platformColor(platform) {
+            const colors = {
+                messenger: 'bg-blue-400/10 border-blue-400/30 text-blue-400',
+                instagram: 'bg-[#E1306C]/10 border-[#E1306C]/30 text-[#E1306C]',
+                whatsapp: 'bg-emerald-400/10 border-emerald-400/30 text-emerald-400',
+                telegram: 'bg-sky-400/10 border-sky-400/30 text-sky-400'
+            };
+            return colors[platform] || 'bg-gray-400/10 border-gray-400/30 text-gray-400';
+        },
+        
+        formatTime(ts) {
+            if (!ts) return '';
+            const d = new Date(ts + 'Z');
+            return d.toLocaleDateString('fr-DZ', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+        },
+        
+        filteredConversations() {
+            let result = this.conversations;
+            if (this.platformFilter) {
+                result = result.filter(c => c.platform === this.platformFilter);
+            }
+            if (this.searchQuery) {
+                const q = this.searchQuery.toLowerCase();
+                result = result.filter(c => 
+                    c.name.toLowerCase().includes(q) ||
+                    c.sender_id.toLowerCase().includes(q) ||
+                    c.lastMsg.toLowerCase().includes(q)
+                );
+            }
+            return result;
+        },
+        
+        init() {
+            this.fetchMessages();
+            // Auto-refresh every 10 seconds
+            this.autoRefresh = setInterval(() => this.fetchMessages(), 10000);
+        },
+        
+        destroy() {
+            if (this.autoRefresh) clearInterval(this.autoRefresh);
+        }
+     }"
+     x-init="init()" @destroy="destroy()">
+
+    <!-- Header -->
     <div class="flex items-center justify-between mb-6">
         <div>
             <h1 class="text-xl font-bold text-white">💬 Live Chat</h1>
             <p class="text-xs text-gray-500 mt-1 font-mono">Customer conversations across all channels</p>
         </div>
+        <div class="flex items-center gap-3">
+            <span class="flex items-center gap-1.5 text-[10px] font-mono">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span class="text-gray-400">Live</span>
+            </span>
+            <span class="text-[10px] font-mono text-gray-500" x-text="conversations.length + ' conversations'"></span>
+        </div>
     </div>
-    <div class="bg-rc-card border border-rc-border/60 rounded-xl p-6 text-center py-10">
-        <i class="fa-solid fa-comments text-4xl text-rc-border mb-4"></i>
-        <p class="text-gray-400 text-sm">Loading Live Chat...</p>
+
+    <div class="flex gap-4 h-[calc(100vh-260px)] min-h-[400px]">
+        <!-- Conversation List -->
+        <div class="w-full" :class="selectedConv ? 'hidden lg:block lg:w-96' : 'block'">
+            <div class="bg-rc-card border border-rc-border/60 rounded-xl overflow-hidden h-full flex flex-col">
+                <!-- Filters -->
+                <div class="p-3 border-b border-rc-border/40 space-y-2">
+                    <div class="relative">
+                        <i class="fa-solid fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs"></i>
+                        <input type="text" x-model="searchQuery" placeholder="Search conversations..."
+                               class="w-full bg-rc-bg border border-rc-border/50 rounded-lg pl-8 pr-3 py-2 text-xs text-gray-200 font-mono placeholder-gray-600 focus:outline-none focus:border-neon-purple/50 transition-colors">
+                    </div>
+                    <div class="flex gap-1.5">
+                        <button @click="platformFilter=''"
+                                class="text-[10px] font-mono px-2.5 py-1 rounded-lg border transition-colors"
+                                :class="platformFilter === '' ? 'bg-neon-purple/20 border-neon-purple/50 text-neon-purple' : 'bg-rc-card-hover/50 border-rc-border/40 text-gray-500 hover:text-gray-300'">
+                            All
+                        </button>
+                        <button @click="platformFilter='messenger'"
+                                class="text-[10px] font-mono px-2.5 py-1 rounded-lg border transition-colors"
+                                :class="platformFilter === 'messenger' ? 'bg-blue-400/20 border-blue-400/50 text-blue-400' : 'bg-rc-card-hover/50 border-rc-border/40 text-gray-500 hover:text-gray-300'">
+                            <i class="fa-brands fa-facebook-messenger"></i>
+                        </button>
+                        <button @click="platformFilter='instagram'"
+                                class="text-[10px] font-mono px-2.5 py-1 rounded-lg border transition-colors"
+                                :class="platformFilter === 'instagram' ? 'bg-[#E1306C]/20 border-[#E1306C]/50 text-[#E1306C]' : 'bg-rc-card-hover/50 border-rc-border/40 text-gray-500 hover:text-gray-300'">
+                            <i class="fa-brands fa-instagram"></i>
+                        </button>
+                        <button @click="platformFilter='whatsapp'"
+                                class="text-[10px] font-mono px-2.5 py-1 rounded-lg border transition-colors"
+                                :class="platformFilter === 'whatsapp' ? 'bg-emerald-400/20 border-emerald-400/50 text-emerald-400' : 'bg-rc-card-hover/50 border-rc-border/40 text-gray-500 hover:text-gray-300'">
+                            <i class="fa-brands fa-whatsapp"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Loading -->
+                <div x-show="loading" class="flex-1 flex items-center justify-center">
+                    <div class="inline-flex items-center gap-2 text-gray-500">
+                        <i class="fa-solid fa-circle-notch text-neon-purple animate-spin"></i>
+                        <span class="text-xs font-mono">Loading...</span>
+                    </div>
+                </div>
+
+                <!-- Conversations -->
+                <div x-show="!loading" class="flex-1 overflow-y-auto sidebar-scroll">
+                    <template x-if="filteredConversations().length === 0">
+                        <div class="flex items-center justify-center h-full">
+                            <div class="text-center p-6">
+                                <i class="fa-solid fa-inbox text-3xl text-rc-border mb-3"></i>
+                                <p class="text-sm text-gray-400">No conversations yet</p>
+                                <p class="text-[10px] font-mono text-gray-600 mt-1">Customer messages will appear here in real time.</p>
+                            </div>
+                        </div>
+                    </template>
+
+                    <template x-for="conv in filteredConversations()" :key="conv.sender_id + '|' + conv.platform">
+                        <div @click="selectConversation(conv)"
+                             class="flex items-start gap-3 p-3.5 border-b border-rc-border/20 cursor-pointer transition-colors"
+                             :class="selectedConv && selectedConv.sender_id === conv.sender_id && selectedConv.platform === conv.platform ? 'bg-neon-purple/10 border-l-2 border-l-neon-purple' : 'hover:bg-rc-card-hover/30'">
+                            <!-- Avatar -->
+                            <div class="w-9 h-9 rounded-xl shrink-0 flex items-center justify-center text-sm font-bold"
+                                 :class="platformColor(conv.platform)">
+                                <span x-text="(conv.name||'?')[0].toUpperCase()"></span>
+                            </div>
+                            <!-- Info -->
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center justify-between gap-1">
+                                    <p class="text-xs font-medium text-gray-200 truncate" x-text="conv.name"></p>
+                                    <span class="text-[9px] font-mono text-gray-600 shrink-0" x-text="formatTime(conv.lastTime)"></span>
+                                </div>
+                                <div class="flex items-center gap-1.5 mt-0.5">
+                                    <i :class="platformIcon(conv.platform)" class="text-[10px]"></i>
+                                    <p class="text-[10px] text-gray-500 truncate font-mono" x-text="conv.lastMsg.substring(0, 60)"></p>
+                                </div>
+                                <p class="text-[9px] font-mono text-gray-600 mt-0.5" x-text="conv.messages.length + ' messages'"></p>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- Conversation Detail -->
+        <div class="flex-1" :class="!selectedConv ? 'hidden lg:flex lg:items-center lg:justify-center' : 'block'">
+            <template x-if="!selectedConv">
+                <div class="bg-rc-card border border-rc-border/60 rounded-xl p-10 text-center h-full flex items-center justify-center">
+                    <div>
+                        <i class="fa-solid fa-comment-dots text-5xl text-rc-border mb-4"></i>
+                        <p class="text-gray-400 text-sm">Select a conversation</p>
+                        <p class="text-xs font-mono text-gray-600 mt-1">Choose a conversation from the left to view messages.</p>
+                    </div>
+                </div>
+            </template>
+
+            <template x-if="selectedConv">
+                <div class="bg-rc-card border border-rc-border/60 rounded-xl h-full flex flex-col overflow-hidden">
+                    <!-- Conversation Header -->
+                    <div class="flex items-center justify-between p-4 border-b border-rc-border/40 shrink-0">
+                        <div class="flex items-center gap-3">
+                            <button @click="backToList()" class="lg:hidden w-7 h-7 rounded-lg bg-rc-card-hover border border-rc-border/40 flex items-center justify-center text-gray-400 hover:text-white transition-colors">
+                                <i class="fa-solid fa-arrow-left text-xs"></i>
+                            </button>
+                            <div class="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold" :class="platformColor(selectedConv.platform)">
+                                <span x-text="(selectedConv.name||'?')[0].toUpperCase()"></span>
+                            </div>
+                            <div>
+                                <h3 class="text-sm font-semibold text-white" x-text="selectedConv.name"></h3>
+                                <p class="text-[10px] font-mono text-gray-500 flex items-center gap-1.5">
+                                    <i :class="platformIcon(selectedConv.platform)" class="text-[10px]"></i>
+                                    <span x-text="selectedConv.platform"></span>
+                                    <span class="text-gray-600">·</span>
+                                    <span x-text="selectedConv.sender_id.substring(0, 12) + '...'"></span>
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Messages -->
+                    <div class="flex-1 overflow-y-auto p-4 space-y-3 sidebar-scroll">
+                        <template x-for="msg in selectedConv.messages" :key="msg.id">
+                            <div>
+                                <!-- Customer Message -->
+                                <div class="flex items-start gap-2.5 mb-1.5" x-show="msg.message">
+                                    <div class="w-6 h-6 rounded-lg shrink-0 flex items-center justify-center text-[8px] font-bold" :class="platformColor(selectedConv.platform)">
+                                        <span x-text="(selectedConv.name||'C')[0].toUpperCase()"></span>
+                                    </div>
+                                    <div class="flex-1 max-w-[80%]">
+                                        <div class="bg-rc-bg border border-rc-border/40 rounded-lg rounded-tl-none px-3.5 py-2.5">
+                                            <p class="text-xs text-gray-200 leading-relaxed" x-text="msg.message"></p>
+                                        </div>
+                                        <p class="text-[9px] font-mono text-gray-600 mt-0.5 ml-1" x-text="formatTime(msg.created_at)"></p>
+                                    </div>
+                                </div>
+                                <!-- AI Reply -->
+                                <div class="flex items-start gap-2.5 mb-1.5 flex-row-reverse" x-show="msg.reply">
+                                    <div class="w-6 h-6 rounded-lg bg-neon-purple/10 border border-neon-purple/20 shrink-0 flex items-center justify-center text-[8px]">
+                                        <i class="fa-solid fa-robot text-neon-purple"></i>
+                                    </div>
+                                    <div class="flex-1 max-w-[80%]">
+                                        <div class="bg-neon-purple/5 border border-neon-purple/20 rounded-lg rounded-tr-none px-3.5 py-2.5">
+                                            <p class="text-xs text-gray-200 leading-relaxed" x-text="msg.reply"></p>
+                                        </div>
+                                        <p class="text-[9px] font-mono text-gray-600 mt-0.5 mr-1 text-right" x-text="formatTime(msg.created_at)"></p>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </template>
+        </div>
     </div>
 </div>
 

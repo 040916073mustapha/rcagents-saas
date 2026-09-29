@@ -21,13 +21,17 @@ from database.db import (
 from middleware.auth import store_manager_required, token_required, generate_token
 from werkzeug.security import check_password_hash, generate_password_hash
 from database.db import create_store, get_store_by_slug, get_stores, _ensure_default_store
+from database.db import get_store_prompt, set_store_prompt, get_all_store_prompts
 
 import sqlite3
 import os
 import re
 import json
 import time
+import logging
 from database.db import get_db, dict_from_row, get_current_store_id
+
+logger = logging.getLogger('royal-server')
 
 
 def _pos_db():
@@ -1183,3 +1187,72 @@ def print_barcode(product_id):
         "barcode": product.get("barcode"),
         "message": f"Barcode printed for {product['name']} x{qty}"
     })
+
+
+# ============================================================
+# 🧠 AI Agents Prompts API
+# ============================================================
+
+@store_bp.route("/api/agents/prompts", methods=["GET"])
+def api_agents_prompts():
+    """GET: جلب جميع Prompts الـ AI Agents"""
+    try:
+        store_id = request.args.get("store_id", 1, type=int)
+        prompts = get_all_store_prompts(store_id)
+        # إضافة البيانات الوصفية للكل Agent
+        agents_meta = [
+            {"type": "customer_support", "name": "Customer Support", "emoji": "🤝", "icon": "fa-solid fa-headset", "color": "blue"},
+            {"type": "shipping_tracking", "name": "Shipping Tracking", "emoji": "🚚", "icon": "fa-solid fa-truck-fast", "color": "amber"},
+            {"type": "sales_agent", "name": "Sales Agent", "emoji": "💰", "icon": "fa-solid fa-cart-shopping", "color": "purple"},
+            {"type": "inventory_agent", "name": "Inventory Agent", "emoji": "📦", "icon": "fa-solid fa-warehouse", "color": "emerald"},
+            {"type": "campaign_agent", "name": "Campaign Agent", "emoji": "🎯", "icon": "fa-solid fa-bullhorn", "color": "pink"},
+            {"type": "analytics_agent", "name": "Analytics Agent", "emoji": "📊", "icon": "fa-solid fa-chart-line", "color": "cyan"},
+            {"type": "engagement_agent", "name": "Engagement Agent", "emoji": "💕", "icon": "fa-solid fa-heart", "color": "rose"},
+        ]
+        result = []
+        for agent in agents_meta:
+            pt = agent["type"]
+            result.append({
+                "type": pt,
+                "name": agent["name"],
+                "emoji": agent["emoji"],
+                "icon": agent["icon"],
+                "color": agent["color"],
+                "prompt": prompts.get(pt, ""),
+            })
+        return jsonify({"success": True, "agents": result, "store_id": store_id})
+    except Exception as e:
+        logger.error(f"[AGENTS API] GET prompts error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@store_bp.route("/api/agents/prompts", methods=["POST"])
+def api_agents_prompts_save():
+    """POST: حفظ System Prompt لـ Agent معين"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"success": False, "error": "Request body required"}), 400
+        store_id = data.get("store_id", 1)
+        agent_type = data.get("agent_type", "")
+        prompt_text = data.get("prompt_text", "")
+        if not agent_type:
+            return jsonify({"success": False, "error": "agent_type is required"}), 400
+        set_store_prompt(store_id, agent_type, prompt_text)
+        logger.info(f"[AGENTS API] Saved prompt for {agent_type} (store_id={store_id})")
+        return jsonify({"success": True, "agent_type": agent_type, "store_id": store_id})
+    except Exception as e:
+        logger.error(f"[AGENTS API] POST prompts error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@store_bp.route("/api/agents/prompts/<agent_type>", methods=["GET"])
+def api_agent_prompt_by_type(agent_type):
+    """GET: جلب Prompt لـ Agent معين"""
+    try:
+        store_id = request.args.get("store_id", 1, type=int)
+        prompt = get_store_prompt(store_id, agent_type)
+        return jsonify({"success": True, "agent_type": agent_type, "prompt": prompt, "store_id": store_id})
+    except Exception as e:
+        logger.error(f"[AGENTS API] GET {agent_type} error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500

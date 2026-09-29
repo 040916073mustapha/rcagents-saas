@@ -1,0 +1,51 @@
+process_messaging_entries(entries, platform, send_func):
+    logger.info('[Webhook] process_messaging called: plat=' + platform + ' entries=' + str(len(entries)))
+    for entry in entries:
+        for messaging in entry.get('messaging', []):
+            sid = messaging.get('sender', {}).get('id', '')
+            msg_data = messaging.get('message', {})
+            text = msg_data.get('text', '') or ''
+            # Extract image_url from FB/IG attachments
+            image_url = ''
+            attachments = msg_data.get('attachments', [])
+            if attachments:
+                for att in attachments:
+                    if att.get('type') == 'image':
+                        payload = att.get('payload') or {}
+                        image_url = payload.get('url') or att.get('url') or ''
+                        if image_url:
+                            break
+            image_url = image_url or ''
+            if sid and (text or image_url):
+                # ðŸ†• Multi-Tenant: Ø¥ÙŠØ¬Ø§Ø¯ store_id Ù…Ù† Ø§Ù„Ù…Ø­Ø§Ø¯Ø«Ø© (FB Page ID)
+                store_id = 1
+                try:
+                    _old_engine2 = __import__('os').environ.get('DB_ENGINE', '')
+                    if not _old_engine2:
+                        __import__('os').environ['DB_ENGINE'] = 'sqlite'
+                    from database.db import get_store_id_by_platform
+                    # Ù†Ù…Ø±Ø± ØµÙØ­Ø© FB ID â€” Ø³Ù†Ø£Ø®Ø°Ù‡Ø§ Ù…Ù† Ø£ÙˆÙ„ entry ÙÙŠ webhook
+                    entry_page_id = entry.get('id', '')
+                    if entry_page_id:
+                        sid_from_registry = get_store_id_by_platform('messenger' if platform == 'FB' else 'instagram', str(entry_page_id))
+                        if sid_from_registry:
+                            store_id = sid_from_registry
+                            logger.info(f"[WEBHOOK] Routed {platform} msg to store_id={store_id} (page={entry_page_id})")
+                except Exception as wh_err:
+                    logger.warning(f"[WEBHOOK] Store lookup failed: {_safe_str(wh_err)}")
+                logger.info(f"{platform} msg from {sid}: text='{text[:60] if text else '(none)'}' image_url={image_url[:60] if image_url else '(none)'} store_id={store_id}")
+                threading.Thread(target=send_func, args=(sid, text, image_url, store_id), daemon=True).start()
+
+
+# ????????? Process WhatsApp webhook payload ??????????????????????????????????????????????????????????????????????????????????????????
+# Structure: entry[].changes[].value.messages[].from + text.body
+
+def process_whatsapp_entries(entries):
+    logger.info('[Webhook] process_whatsapp called: entries=' + str(len(entries)))
+    for entry in entries:
+        for change in entry.get('changes', []):
+            for msg in change.get('value', {}).get('messages', []):
+                sender = msg.get('from', '')
+                text = (msg.get('text') or {}).get('body', '') or ''
+                # WhatsApp image attachment (id or link)
+                img = msg

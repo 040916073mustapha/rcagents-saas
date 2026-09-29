@@ -1,0 +1,1185 @@
+"""
+Royal Chaussures — Store POS API
+================================
+مسارات API خاصة بمدير المحل (أخوك):
+- إدارة المنتجات و المخزون
+- تسجيل المبيعات اليومية
+- طباعة الباركود و الفواتير
+- المصاريف
+"""
+
+from flask import Blueprint, request, jsonify, g, render_template
+from database.db import (
+    get_products, get_product, get_product_by_barcode, get_product_by_sku,
+    create_product, update_product, search_products,
+    get_inventory, update_inventory, deduct_store_inventory, get_low_stock_items,
+    create_sale, get_store_sales, get_store_sale_items, get_store_daily_summary,
+    create_expense, get_expenses,
+    create_purchase_with_items, get_purchases, get_purchase_items,
+    get_store_purchases, get_purchase_detail
+)
+from middleware.auth import store_manager_required, token_required, generate_token
+from werkzeug.security import check_password_hash, generate_password_hash
+from database.db import create_store, get_store_by_slug, get_stores, _ensure_default_store
+
+import sqlite3
+import os
+import re
+import json
+import time
+from database.db import get_db, dict_from_row, get_current_store_id
+
+
+def _pos_db():
+    """اتصال آمن لقاعدة الرويال ستور - متوافق مع SQLite و PostgreSQL
+    يُخزّن في g لمنع تسريب الـ pool connections
+    """
+    if hasattr(g, '_pos_db_conn') and g._pos_db_conn is not None:
+        return g._pos_db_conn
+    db = get_db()
+    # SQLite Row Factory (آمن: فقط إذا كان sqlite3 connection)
+    import sqlite3 as _sqlite3
+    if isinstance(db, _sqlite3.Connection):
+        db.row_factory = _sqlite3.Row
+    g._pos_db_conn = db
+    return db
+
+store_bp = Blueprint("store", __name__, template_folder="../templates", static_folder="../static")
+
+
+@store_bp.teardown_request
+def _close_db_on_teardown(exception=None):
+    """يُغلق اتصال قاعدة البيانات تلقائياً بعد كل طلب (لمنع استنزاف pool)"""
+    if hasattr(g, '_pos_db_conn'):
+        try:
+            g._pos_db_conn.close()
+        except:
+            pass
+        g._pos_db_conn = None
+
+
+def _resolve_store_id():
+    """تحديد store_id من الطلب: X-Store-ID header > g.store_id > 1"""
+    sid = request.headers.get("X-Store-ID", "")
+    if sid.isdigit():
+        return int(sid)
+    if hasattr(g, "store_id") and g.store_id:
+        return g.store_id
+    return get_current_store_id()
+
+
+# ============================================================
+# 🔗 Nexus POS — SaaS Multi-Tenant Auth & Onboarding
+# ============================================================
+
+@store_bp.route("/register", methods=["POST"])
+def register_store():
+    """
+    تسجيل متجر جديد في Nexus POS
+    يقوم بإنشاء المتجر + مستخدم مدير له
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Request body required"}), 400
+        
+        # الحقول المطلوبة
+        store_name = data.get("store_name", "").strip()
+        admin_username = data.get("username", "").strip()
+        admin_password = data.get("password", "").strip()
+        
+        if not store_name or not admin_username or not admin_password:
+            return jsonify({"error": "store_name, username, password are required"}), 400
+        
+        # توليد slug من اسم المتجر
+        slug = store_name.lower().replace(" ", "-")
+        slug = re.sub(r"[^a-z0-9-]", "", slug)
+        if not slug:
+            slug = f"store-{int(time.time())}"
+        
+        # التأكد من عدم تكرار الـ slug
+        existing = get_store_by_slug(slug)
+        if existing:
+            # إضافة لاحقة عددية
+            counter = 1
+            while get_store_by_slug(f"{slug}-{counter}"):
+                counter += 1
+            slug = f"{slug}-{counter}"
+        
+        db = get_db()
+        
+        # التأكد من عدم تكرار username
+        existing_user = db.execute(
+            "SELECT id FROM users WHERE username = ?", [admin_username]
+        ).fetchone()
+        if existing_user:
+            return jsonify({"error": "Username already exists"}), 409
+        
+        # إنشاء المتجر
+        store = create_store({
+            "name": store_name,
+            "slug": slug,
+            "email": data.get("email", ""),
+            "phone": data.get("phone", ""),
+            "address": data.get("address", ""),
+            "subscription_tier": data.get("subscription_tier", "free"),
+            "settings": {
+                "currency": "DZD",
+                "language": "ar",
+                "timezone": "Africa/Algiers"
+            }
+        })
+        
+        # إنشاء مستخدم مدير المتجر
+        db.execute(
+            """INSERT INTO users (username, password_hash, role, store_id, display_name, permissions)
+               VALUES (?, ?, 'store_manager', ?, ?, ?)""",
+            [
+                admin_username,
+                generate_password_hash(admin_password),
+                store["id"],
+                data.get("display_name", store_name),
+                json.dumps([
+                    "store:products:*",
+                    "store:sales:*",
+                    "store:inventory:*",
+                    "store:customers:*",
+                    "store:print:*",
+                    "store:expenses:*",
+                    "shared:products:read",
+                    "shared:inventory:read"
+                ])
+            ]
+        )
+        db.commit()
+        
+        return jsonify({
+            "success": True,
+            "store": store,
+            "message": f"تم إنشاء متجر '{store_name}' بنجاح!"
+        }), 201
+        
+    except Exception as e:
+        import traceback
+        print(f"[SaaS Register] Error: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
+
+
+@store_bp.route("/stores", methods=["GET"])
+def list_stores():
+    """قائمة المتاجر المسجلة (للاستعلام العام)"""
+    try:
+        stores = get_stores()
+        return jsonify({"stores": stores, "count": len(stores)})
+    except Exception as e:
+        return jsonify({"stores": [], "count": 0, "error": str(e)}), 500
+
+
+@store_bp.route("/stores/check-slug", methods=["GET"])
+def check_slug_availability():
+    """التحقق من توفر slug لمتجر"""
+    slug = request.args.get("slug", "").strip()
+    if not slug:
+        return jsonify({"available": False, "error": "Slug required"}), 400
+    existing = get_store_by_slug(slug)
+    return jsonify({"available": existing is None, "slug": slug})
+
+
+# ============================================================
+# 🏪 POS PWA - صفحة الكاشير
+# ============================================================
+
+@store_bp.route("/pos", methods=["GET"])
+def pos_page():
+    """عرض واجهة الـ POS PWA"""
+    return render_template("pos/index.html")
+
+
+# ============================================================
+# 📦 POS Purchases API (Nouvel achat) — no auth required
+# ============================================================
+
+@store_bp.route('/pos/purchases', methods=['POST'])
+def pos_record_purchase():
+    """Record a purchase from POS without auth requirement"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Request body required"}), 400
+        if "items" not in data or not data["items"]:
+            return jsonify({"error": "Au moins un article est requis"}), 400
+        
+        # Normalize field names from Frontend (French) to Backend (English)
+        field_map = {
+            "designation": "product_name",
+            "quantite": "quantity",
+            "prix_achat": "unit_price",
+            "prix_vente": "sale_price",
+            "famille": "category",
+            "stock_alert": "low_stock_threshold",
+        }
+        normalized_items = []
+        for item in data.get("items", []):
+            normalized = {}
+            for k, v in item.items():
+                new_k = field_map.get(k, k)
+                normalized[new_k] = v
+            # Calculate total_price from unit_price * quantity if not provided
+            if "total_price" not in normalized or not normalized.get("total_price"):
+                up = float(normalized.get("unit_price", 0))
+                qty = int(normalized.get("quantity", 1))
+                normalized["total_price"] = up * qty
+            # Auto-create product if new (no product_id)
+            if "product_id" not in normalized or not normalized.get("product_id"):
+                store_id = _resolve_store_id()
+                try:
+                    purchase_qty = int(normalized.get("quantity", 1))
+                    new_product = create_product({
+                        "store_id": store_id,
+                        "name": normalized.get("product_name", "Article sans nom"),
+                        "sku": normalized.get("barcode", ""),
+                        "barcode": normalized.get("barcode", ""),
+                        "category": normalized.get("category", ""),
+                        "color": "",
+                        "size": "",
+                        "cost_price": float(normalized.get("unit_price", 0)),
+                        "store_price": float(normalized.get("sale_price", 0)),
+                        "online_price": 0,
+                        "supplier": data.get("supplier", "divers"),
+                        "is_active": True
+                    })
+                    if new_product and "id" in new_product:
+                        new_pid = new_product["id"]
+                        normalized["product_id"] = new_pid
+                        # Update inventory with the purchased quantity
+                        try:
+                            update_inventory(new_pid, {
+                                "store_quantity": purchase_qty,
+                                "low_stock_threshold": int(normalized.get("low_stock_threshold", 5))
+                            })
+                        except Exception as inv_err:
+                            print(f"[POS Purchase] Inventory update error: {inv_err}")
+                    elif new_product and isinstance(new_product, dict) and new_product.get("id"):
+                        new_pid = new_product["id"]
+                        normalized["product_id"] = new_pid
+                        try:
+                            update_inventory(new_pid, {
+                                "store_quantity": purchase_qty,
+                                "low_stock_threshold": int(normalized.get("low_stock_threshold", 5))
+                            })
+                        except Exception as inv_err:
+                            print(f"[POS Purchase] Inventory update error: {inv_err}")
+                except Exception as pe:
+                    print(f"[POS Purchase] Auto-create product error: {pe}")
+                    normalized["product_id"] = None
+            normalized_items.append(normalized)
+        
+        data["items"] = normalized_items
+        data["store_id"] = _resolve_store_id()
+        data["recorded_by"] = "pos"
+        # Use designation as supplier_name if not provided
+        if not data.get("supplier_name"):
+            data["supplier_name"] = data.get("supplier", "divers")
+        
+        result = create_purchase_with_items(data)
+        if "error" in result:
+            return jsonify({"error": result["error"]}), 500
+        # Return purchase detail with items
+        purchase = get_purchase_detail(result["id"])
+        if purchase:
+            # Ensure total is set (calculate from items if needed)
+            items_total = sum(float(i.get("total_price", 0)) or float(i.get("unit_price", 0)) * int(i.get("quantity", 1)) for i in purchase.get("items", []))
+            purchase["total"] = purchase.get("total") or items_total
+            purchase["total_amount"] = purchase["total"]
+        return jsonify({"purchase": purchase, "items": purchase.get("items", []), "total_amount": purchase.get("total", 0) if purchase else 0})
+    except Exception as e:
+        import traceback
+        print(f"[POS Purchase] Error: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
+
+
+@store_bp.route('/pos/purchases', methods=['GET'])
+def pos_list_purchases():
+    """List purchases from POS without auth requirement"""
+    try:
+        store_id = _resolve_store_id()
+        purchases = get_store_purchases(store_id=store_id, page=1, per_page=100)
+        return jsonify({"success": True, "purchases": purchases})
+    except Exception as e:
+        import traceback
+        print(f"[POS Purchases List] Error: {e}\n{traceback.format_exc()}")
+        return jsonify({"success": False, "purchases": [], "error": str(e)}), 500
+
+
+@store_bp.route('/pos/purchases/<int:purchase_id>', methods=['DELETE'])
+def pos_delete_purchase(purchase_id):
+    """Delete a purchase from POS"""
+    try:
+        from database.db import get_db, dict_from_row
+        db = get_db()
+        # Check if purchase exists
+        is_sqlite = 'sqlite' in str(type(db))
+        if is_sqlite:
+            row = db.execute('SELECT id FROM purchases WHERE id = ?', [purchase_id]).fetchone()
+        else:
+            cur = db._conn.cursor()
+            cur.execute('SELECT id FROM purchases WHERE id = %s', [purchase_id])
+            row = cur.fetchone()
+            cur.close()
+        if not row:
+            return jsonify({"error": "Achat introuvable"}), 404
+        # Soft delete: set status to cancelled
+        if is_sqlite:
+            db.execute('UPDATE purchases SET status = ? WHERE id = ?', ['annule', purchase_id])
+        else:
+            cur = db._conn.cursor()
+            cur.execute('UPDATE purchases SET status = %s WHERE id = %s', ['annule', purchase_id])
+            cur.close()
+        db.commit()
+        return jsonify({"success": True, "message": "Achat annule"})
+    except Exception as e:
+        import traceback
+        print(f"[POS Delete Purchase] Error: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================
+# 🏷️ POS Products API (Liste des articles) — no auth required
+# ============================================================
+
+@store_bp.route('/pos/products')
+def pos_products():
+    """Fetch products with inventory and pricing for Liste des articles page"""
+    db = None
+    try:
+        logger = __import__('logging').getLogger('royal-server')
+        db = _pos_db()
+        logger.info(f"[POS] getPosProducts: db type={type(db).__name__}, _resolve_store_id={_resolve_store_id()}")
+        rows = db.execute("""
+            SELECT 
+                p.id, p.sku, p.name, p.barcode, p.category, p.color, p.size,
+                p.cost_price, p.store_price, p.online_price,
+                p.description, p.image_url, p.is_active, p.supplier,
+                COALESCE(i.store_quantity, 0) as store_quantity,
+                COALESCE(i.online_quantity, 0) as online_quantity,
+                COALESCE(i.warehouse_quantity, 0) as warehouse_quantity,
+                COALESCE(i.low_stock_threshold, 5) as low_stock_threshold
+            FROM products p
+            LEFT JOIN inventory i ON i.product_id = p.id
+            WHERE p.is_active IS TRUE
+            ORDER BY p.name ASC
+        """).fetchall()
+        products = []
+        for r in rows:
+            d = dict(r)
+            d['total_quantity'] = d['store_quantity'] + d['online_quantity'] + d['warehouse_quantity']
+            d['remise_pct'] = 0.0
+            sp = d['store_price'] or d['online_price'] or 0
+            cp = d['cost_price'] or 0
+            if sp > 0 and cp > 0:
+                d['remise_pct'] = round((1 - cp / sp) * 100, 1)
+            d['store_price'] = sp
+            products.append(d)
+        total_qty = sum(p['total_quantity'] for p in products)
+        total_articles = len(products)
+        return jsonify({
+            'success': True,
+            'products': products,
+            'total_quantity': total_qty,
+            'total_articles': total_articles
+        })
+    except Exception as e:
+        import traceback
+        print(f'[POS Products API] Error: {e}\n{traceback.format_exc()}')
+        return jsonify({'success': False, 'products': [], 'total_quantity': 0, 'total_articles': 0, 'error': str(e)}), 500
+
+
+@store_bp.route('/pos/products/barcode/<barcode>')
+def pos_product_by_barcode(barcode):
+    """Lookup product by barcode from POS — no auth required"""
+    try:
+        db = _pos_db()
+        row = db.execute("""
+            SELECT
+                p.id, p.sku, p.name, p.barcode, p.category, p.color, p.size,
+                p.cost_price, p.store_price, p.online_price,
+                p.description, p.image_url, p.is_active, p.supplier,
+                COALESCE(i.store_quantity, 0) as store_quantity,
+                COALESCE(i.online_quantity, 0) as online_quantity,
+                COALESCE(i.warehouse_quantity, 0) as warehouse_quantity,
+                COALESCE(i.low_stock_threshold, 5) as low_stock_threshold
+            FROM products p
+            LEFT JOIN inventory i ON i.product_id = p.id
+            WHERE p.barcode = ? AND p.is_active IS TRUE
+            LIMIT 1
+        """, [barcode]).fetchone()
+        if row:
+            d = dict(row)
+            d['total_quantity'] = d['store_quantity'] + d['online_quantity'] + d['warehouse_quantity']
+            d['store_price'] = d['store_price'] or d['online_price'] or 0
+            return jsonify({"product": d})
+        else:
+            return jsonify({"product": None})
+    except Exception as e:
+        import traceback
+        print(f'[POS Product Barcode] Error: {e}\n{traceback.format_exc()}')
+
+
+# ============================================================
+# 🏗️ POS Products CRUD API (Ajouter, Modifier, Supprimer)
+# ============================================================
+
+@store_bp.route('/pos/products', methods=['POST'])
+def pos_create_product():
+    """Create a new product from POS"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Request body required"}), 400
+        if not data.get("name"):
+            return jsonify({"error": "Le nom du produit est requis"}), 400
+        
+        from database.db import create_product
+        product_data = {
+            "store_id": data.get("store_id", _resolve_store_id()),
+            "name": data["name"],
+            "sku": data.get("sku", data.get("barcode", "")),
+            "barcode": data.get("barcode", ""),
+            "category": data.get("category", ""),
+            "cost_price": float(data.get("cost_price", 0)),
+            "store_price": float(data.get("store_price", 0)),
+            "online_price": float(data.get("online_price", 0)),
+            "supplier": data.get("supplier", "divers"),
+            "description": data.get("description", ""),
+            "image_url": data.get("image_url", ""),
+            "is_active": True
+        }
+        product = create_product(product_data)
+        
+        # Update inventory if store_quantity provided
+        store_qty = data.get("store_quantity")
+        if store_qty is not None and product and "id" in product:
+            try:
+                from database.db import update_inventory
+                update_inventory(product["id"], store_qty=int(store_qty))
+            except Exception as inv_err:
+                print(f"[POS Create] Inventory error: {inv_err}")
+        
+        return jsonify({"product": product, "success": True}), 201
+    except Exception as e:
+        import traceback
+        print(f"[POS Create Product] Error: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
+
+
+@store_bp.route('/pos/products/<int:product_id>', methods=['PUT'])
+def pos_update_product(product_id):
+    """Update a product from POS"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Request body required"}), 400
+        
+        from database.db import update_product, update_inventory
+        
+        # Build update payload with allowed fields
+        update_fields = {}
+        field_map = {
+            "name": "name",
+            "barcode": "barcode",
+            "category": "category",
+            "cost_price": "cost_price",
+            "store_price": "store_price",
+            "online_price": "online_price",
+            "supplier": "supplier",
+            "description": "description",
+            "image_url": "image_url",
+            "is_active": "is_active",
+            "color": "color",
+            "size": "size",
+            "sku": "sku"
+        }
+        for js_key, db_key in field_map.items():
+            if js_key in data:
+                update_fields[db_key] = data[js_key]
+        
+        if not update_fields:
+            return jsonify({"error": "Aucun champ a mettre a jour"}), 400
+        
+        product = update_product(product_id, update_fields)
+        if not product:
+            return jsonify({"error": "Product not found"}), 404
+        
+        # Update inventory if provided
+        low_threshold = data.get("low_stock_threshold")
+        if low_threshold is not None:
+            try:
+                from database.db import get_inventory
+                inv = get_inventory(product_id)
+                if inv:
+                    update_inventory(product_id, low_stock_threshold=int(low_threshold))
+            except Exception:
+                pass
+        
+        return jsonify({"product": product, "success": True})
+    except Exception as e:
+        import traceback
+        print(f"[POS Update Product] Error: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
+
+
+@store_bp.route('/pos/products/<int:product_id>', methods=['DELETE'])
+def pos_delete_product(product_id):
+    """Soft-delete a product from POS"""
+    try:
+        from database.db import update_product
+        product = update_product(product_id, {"is_active": False})
+        if not product:
+            return jsonify({"error": "Product not found"}), 404
+        return jsonify({"success": True, "message": "Produit supprime"})
+    except Exception as e:
+        import traceback
+        print(f"[POS Delete Product] Error: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================
+# 💰 POS Sales API (Nouvelle vente) — no auth required
+# ============================================================
+
+@store_bp.route('/pos/sales', methods=['POST'])
+def pos_record_sale():
+    """Record a sale from POS without auth requirement"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Request body required"}), 400
+        
+        # دعم كلتا الحالتين: items[] (بيعة كاملة) أو منتج فردي
+        if "items" in data and data["items"]:
+            # Payload الجديد مع items[]
+            from database.db import create_sale
+            data["store_id"] = data.get("store_id", 1)
+            data["cashier"] = data.get("cashier", "caisse")
+            # حساب subtotal/total إن لم يوجد
+            if not data.get("subtotal") and not data.get("total"):
+                items_total = sum(float(i.get("total_price", 0)) or float(i.get("unit_price", 0)) * int(i.get("quantity", 1)) for i in data["items"])
+                data["subtotal"] = items_total
+                data["total"] = items_total - float(data.get("discount", 0))
+            result = create_sale(data)
+            if "error" in result:
+                return jsonify(result), 400
+            return jsonify({"sale": result})
+        else:
+            # Payload القديم (منتج فردي) - نحوله لـ items[]
+            if "product_id" not in data or "quantity" not in data:
+                return jsonify({"error": "product_id and quantity required"}), 400
+            from database.db import create_sale
+            qty = int(data.get("quantity", 1))
+            unit_price = float(data.get("unit_price", 0))
+            payload = {
+                "store_id": data.get("store_id", 1),
+                "cashier": data.get("cashier", "caisse"),
+                "customer_name": data.get("customer_name", ""),
+                "customer_phone": data.get("customer_phone", ""),
+                "payment_method": data.get("payment_method", "cash"),
+                "notes": data.get("notes", ""),
+                "subtotal": unit_price * qty,
+                "discount": 0,
+                "tax": 0,
+                "total": unit_price * qty,
+                "items": [{
+                    "product_id": data["product_id"],
+                    "product_name": data.get("product_name", ""),
+                    "quantity": qty,
+                    "unit_price": unit_price,
+                    "total_price": unit_price * qty
+                }]
+            }
+            result = create_sale(payload)
+            if "error" in result:
+                return jsonify(result), 400
+            return jsonify({"sale": result})
+    except Exception as e:
+        import traceback
+        print(f"[POS Sale] Error: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
+
+
+@store_bp.route('/pos/sales', methods=['GET'])
+def pos_list_sales():
+    """List sales from POS without auth requirement"""
+    try:
+        store_id = _resolve_store_id()
+        # Use the DB-agnostic function from database.db
+        sales = get_store_sales(store_id=store_id, page=1, per_page=100)
+        return jsonify({"success": True, "sales": sales})
+    except Exception as e:
+        import traceback
+        print(f"[POS Sales List] Error: {e}\n{traceback.format_exc()}")
+        return jsonify({"success": False, "sales": [], "error": str(e)}), 500
+
+
+# ============================================================
+# 🔐 Auth
+# ============================================================
+
+@store_bp.route("/auth/login", methods=["POST"])
+def login():
+    """تسجيل دخول مدير المحل"""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Request body required"}), 400
+    
+    username = data.get("username", "").strip()
+    password = data.get("password", "").strip()
+    
+    if not username or not password:
+        return jsonify({"error": "Username and password required"}), 400
+    
+    db = get_db()
+    user = dict_from_row(db.execute(
+        "SELECT * FROM users WHERE username = ? AND is_active IS TRUE",
+        [username]
+    ).fetchone())
+    
+    if not user or not check_password_hash(user["password_hash"], password):
+        return jsonify({"error": "Invalid credentials"}), 401
+    
+    if user["role"] not in ["store_manager", "admin"]:
+        return jsonify({"error": "Access denied"}), 403
+    
+    import json as json_module
+    permissions = json_module.loads(user["permissions"]) if isinstance(user["permissions"], str) else user["permissions"]
+    
+    token = generate_token(
+        user_id=user["id"],
+        username=user["username"],
+        role=user["role"],
+        store_id=user.get("store_id"),
+        permissions=permissions
+    )
+    
+    # جلب اسم المتجر من جدول stores
+    store_name = user["username"]
+    store_id = user.get("store_id")
+    if store_id:
+        store_row = dict_from_row(db.execute(
+            "SELECT name FROM stores WHERE id = ?", [store_id]
+        ).fetchone())
+        if store_row:
+            store_name = store_row["name"]
+    
+    return jsonify({
+        "token": token,
+        "user": {
+            "id": user["id"],
+            "username": user["username"],
+            "role": user["role"],
+            "display_name": user["display_name"],
+            "store_id": store_id,
+            "store_name": store_name
+        }
+    })
+
+
+# ============================================================
+# 👤 Profile
+# ============================================================
+
+@store_bp.route("/me", methods=["GET"])
+@store_manager_required
+def get_profile():
+    """معلومات المستخدم الحالي"""
+    return jsonify({
+        "user": {
+            "id": g.current_user["sub"],
+            "username": g.current_user["username"],
+            "role": g.current_user["role"],
+            "store_id": g.current_user.get("store_id"),
+            "permissions": g.current_user.get("permissions", [])
+        }
+    })
+
+
+# ============================================================
+# 📦 Products
+# ============================================================
+
+@store_bp.route("/products", methods=["GET"])
+@store_manager_required
+def list_products():
+    """قائمة المنتجات"""
+    active_only = request.args.get("active", "true").lower() == "true"
+    limit = int(request.args.get("limit", 200))
+    offset = int(request.args.get("offset", 0))
+    
+    products = get_products(active_only=active_only, limit=limit, offset=offset)
+    
+    # إضافة معلومات المخزون لكل منتج
+    inventory = {inv["product_id"]: inv for inv in get_inventory()}
+    for product in products:
+        inv = inventory.get(product["id"], {})
+        product["store_quantity"] = inv.get("store_quantity", 0)
+        product["online_quantity"] = inv.get("online_quantity", 0)
+        product["warehouse_quantity"] = inv.get("warehouse_quantity", 0)
+    
+    return jsonify({"products": products, "count": len(products)})
+
+
+@store_bp.route("/products/search", methods=["GET"])
+@store_manager_required
+def search():
+    """البحث في المنتجات"""
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify({"products": [], "count": 0})
+    
+    limit = int(request.args.get("limit", 50))
+    products = search_products(query, limit=limit)
+    
+    return jsonify({"products": products, "count": len(products)})
+
+
+@store_bp.route("/products/barcode/<barcode>", methods=["GET"])
+@store_manager_required
+def get_by_barcode(barcode):
+    """جلب منتج حسب الباركود (للكاشير)"""
+    product = get_product_by_barcode(barcode)
+    if not product:
+        return jsonify({"error": "Product not found"}), 404
+    
+    inv = get_inventory(product["id"])
+    product["store_quantity"] = inv.get("store_quantity", 0) if inv else 0
+    
+    return jsonify({"product": product})
+
+
+@store_bp.route("/products/<int:product_id>", methods=["GET"])
+@store_manager_required
+def get_single_product(product_id):
+    """جلب منتج حسب ID"""
+    product = get_product(product_id)
+    if not product:
+        return jsonify({"error": "Product not found"}), 404
+    
+    inv = get_inventory(product_id)
+    product["store_quantity"] = inv.get("store_quantity", 0) if inv else 0
+    product["online_quantity"] = inv.get("online_quantity", 0) if inv else 0
+    product["warehouse_quantity"] = inv.get("warehouse_quantity", 0) if inv else 0
+    
+    return jsonify({"product": product})
+
+
+@store_bp.route("/products", methods=["POST"])
+@store_manager_required
+def add_product():
+    """إضافة منتج جديد"""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Request body required"}), 400
+    
+    required = ["name", "sku"]
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({"error": f"Missing required fields: {', '.join(missing)}"}), 400
+    
+    # التحقق من عدم تكرار SKU
+    existing = get_product_by_sku(data["sku"])
+    if existing:
+        return jsonify({"error": f"SKU '{data['sku']}' already exists"}), 409
+    
+    # التحقق من عدم تكرار الباركود
+    barcode = data.get("barcode")
+    if barcode:
+        existing_barcode = get_product_by_barcode(barcode)
+        if existing_barcode:
+            return jsonify({"error": f"Barcode '{barcode}' already exists"}), 409
+    
+    product = create_product(data)
+    
+    # تحديث المخزون الابتدائي
+    if "store_quantity" in data:
+        update_inventory(product["id"], store_qty=data["store_quantity"])
+    
+    return jsonify({"product": product}), 201
+
+
+@store_bp.route("/products/<int:product_id>", methods=["PUT"])
+@store_manager_required
+def edit_product(product_id):
+    """تعديل منتج"""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Request body required"}), 400
+    
+    product = update_product(product_id, data)
+    if not product:
+        return jsonify({"error": "Product not found"}), 404
+    
+    # تحديث المخزون إذا وُجد
+    if "store_quantity" in data:
+        update_inventory(product_id, store_qty=data["store_quantity"])
+        product = get_product(product_id)
+        inv = get_inventory(product_id)
+        product["store_quantity"] = inv.get("store_quantity", 0) if inv else 0
+    
+    return jsonify({"product": product})
+
+
+@store_bp.route("/products/<int:product_id>", methods=["DELETE"])
+@store_manager_required
+def remove_product(product_id):
+    """تعطيل منتج (soft delete)"""
+    product = update_product(product_id, {"is_active": 0})
+    if not product:
+        return jsonify({"error": "Product not found"}), 404
+    
+    return jsonify({"message": "Product disabled", "product": product})
+
+
+# ============================================================
+# 📊 Inventory
+# ============================================================
+
+@store_bp.route("/inventory", methods=["GET"])
+@store_manager_required
+def list_inventory():
+    """عرض المخزون الكامل"""
+    inventory = get_inventory()
+    return jsonify({"inventory": inventory, "count": len(inventory)})
+
+
+@store_bp.route("/inventory/low-stock", methods=["GET"])
+@store_manager_required
+def low_stock():
+    """المنتجات المنخفضة المخزون"""
+    items = get_low_stock_items()
+    return jsonify({"items": items, "count": len(items)})
+
+
+@store_bp.route("/inventory/<int:product_id>", methods=["PUT"])
+@store_manager_required
+def update_inv(product_id):
+    """تحديث مخزون منتج"""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Request body required"}), 400
+    
+    inv = update_inventory(
+        product_id,
+        store_qty=data.get("store_quantity"),
+        online_qty=data.get("online_quantity"),
+        warehouse_qty=data.get("warehouse_quantity")
+    )
+    
+    return jsonify({"inventory": inv})
+
+
+# ============================================================
+# 💰 Sales (POS)
+# ============================================================
+
+@store_bp.route("/sales", methods=["POST"])
+@store_manager_required
+def record_sale():
+    """تسجيل عملية بيع في المحل"""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Request body required"}), 400
+    
+    required = ["product_id", "quantity"]
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({"error": f"Missing required fields: {', '.join(missing)}"}), 400
+    
+    # تحديد store_id من المستخدم الحالي
+    data["store_id"] = g.current_user.get("store_id") or 1
+    data["cashier"] = g.current_user.get("username", "store")
+    
+    result = create_sale(data)
+    
+    if "error" in result:
+        return jsonify(result), 400
+    
+    return jsonify({"sale": result}), 201
+
+
+@store_bp.route("/sales/summary", methods=["GET"])
+@store_manager_required
+def daily_summary():
+    """ملخص يومي"""
+    store_id = g.current_user.get("store_id") or request.args.get("store_id", type=int)
+    date_str = request.args.get("date")
+    
+    summary = get_store_daily_summary(store_id or 1, date_str)
+    
+    return jsonify({"summary": summary})
+
+
+# ============================================================
+# 💸 Expenses
+# ============================================================
+
+@store_bp.route("/expenses", methods=["POST"])
+@store_manager_required
+def add_expense():
+    """تسجيل مصروف"""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Request body required"}), 400
+    
+    required = ["category", "amount"]
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({"error": f"Missing required fields: {', '.join(missing)}"}), 400
+    
+    data["store_id"] = g.current_user.get("store_id") or 1
+    data["recorded_by"] = g.current_user.get("username", "store")
+    
+    expense = create_expense(data)
+    
+    return jsonify({"expense": expense}), 201
+
+
+@store_bp.route("/expenses", methods=["GET"])
+@store_manager_required
+def list_expenses():
+    """جلب المصاريف"""
+    store_id = g.current_user.get("store_id") or request.args.get("store_id", type=int)
+    from_date = request.args.get("from")
+    to_date = request.args.get("to")
+    limit = int(request.args.get("limit", 100))
+    
+    expenses = get_expenses(
+        store_id=store_id,
+        from_date=from_date,
+        to_date=to_date,
+        limit=limit
+    )
+    
+    return jsonify({"expenses": expenses, "count": len(expenses)})
+
+
+# ============================================================
+# 📦 Purchases (Nouvel achat — Tamin al-makhzoun)
+# ============================================================
+
+@store_bp.route("/purchases", methods=["POST"])
+@store_manager_required
+def record_purchase():
+    """تسجيل فاتورة شراء + إنشاء/تحديث المنتجات + تموين المخزون"""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Request body required"}), 400
+    
+    if "items" not in data or not data["items"]:
+        return jsonify({"error": "Au moins un article est requis"}), 400
+    
+    data["store_id"] = g.current_user.get("store_id") or 1
+    data["recorded_by"] = g.current_user.get("username", "store")
+    
+    result = create_purchase_with_items(data)
+    
+    return jsonify({"purchase": result["purchase"], "items": result["items"]}), 201
+
+
+@store_bp.route("/purchases", methods=["GET"])
+@store_manager_required
+def list_purchases():
+    """جلب فواتير الشراء"""
+    store_id = g.current_user.get("store_id") or request.args.get("store_id", type=int)
+    limit = int(request.args.get("limit", 50))
+    offset = int(request.args.get("offset", 0))
+    
+    purchases = get_purchases(store_id=store_id, limit=limit, offset=offset)
+    return jsonify({"purchases": purchases, "count": len(purchases)})
+
+
+@store_bp.route("/purchases/<int:purchase_id>/items", methods=["GET"])
+@store_manager_required
+def get_purchase_items_route(purchase_id):
+    """جلب عناصر فاتورة شراء"""
+    items = get_purchase_items(purchase_id)
+    return jsonify({"items": items, "count": len(items)})
+
+
+@store_bp.route("/products/barcode/generate", methods=["POST"])
+@store_manager_required
+def generate_barcode():
+    """توليد باركود عشوائي"""
+    import random
+    import string
+    # توليد باركود EAN-13 وهمي
+    code = "2" + "".join(random.choices(string.digits, k=11))
+    # حساب checksum بسيط
+    total = sum(int(code[i]) * (1 if i % 2 == 0 else 3) for i in range(12))
+    check = (10 - (total % 10)) % 10
+    barcode = code + str(check)
+    
+    return jsonify({"barcode": barcode})
+
+
+@store_bp.route("/products/demo-data", methods=["GET"])
+@store_manager_required
+def generate_demo_data():
+    """توليد بيانات وهمية للاختبار السريع"""
+    import random
+    articles = [
+        {"designation": "lazio 01", "prix_achat": 2500, "prix_vente": 3500},
+        {"designation": "lazio 02", "prix_achat": 2800, "prix_vente": 3900},
+        {"designation": "nike air max", "prix_achat": 4500, "prix_vente": 6500},
+        {"designation": "adidas superstar", "prix_achat": 3200, "prix_vente": 4800},
+        {"designation": "puma rs-x", "prix_achat": 3600, "prix_vente": 5200},
+        {"designation": "reebok classic", "prix_achat": 2100, "prix_vente": 3200},
+        {"designation": "converse all star", "prix_achat": 1800, "prix_vente": 2800},
+        {"designation": "vans old skool", "prix_achat": 2200, "prix_vente": 3400}
+    ]
+    
+    # توليد باركود عشوائي لكل منتج
+    result = []
+    for art in articles:
+        code = "2" + "".join(random.choices("0123456789", k=11))
+        total = sum(int(code[i]) * (1 if i % 2 == 0 else 3) for i in range(12))
+        check = (10 - (total % 10)) % 10
+        barcode = code + str(check)
+        result.append({
+            **art,
+            "barcode": barcode,
+            "marge_pct": round(((art["prix_vente"] - art["prix_achat"]) / art["prix_achat"]) * 100, 1),
+            "marge_montant": art["prix_vente"] - art["prix_achat"]
+        })
+    
+    return jsonify({"articles": result})
+
+
+# ============================================================
+# 📋 Sales List (Liste des ventes)
+# ============================================================
+
+@store_bp.route("/sales", methods=["GET"])
+@store_manager_required
+def list_sales():
+    """جلب المبيعات مع فلترة"""
+    store_id = g.current_user.get("store_id") or request.args.get("store_id", type=int)
+    
+    filters = {
+        "store_id": store_id,
+        "from_date": request.args.get("date_from"),
+        "to_date": request.args.get("date_to"),
+        "code": request.args.get("code"),
+        "client": request.args.get("client"),
+        "vendeur": request.args.get("vendeur"),
+        "cancelled": request.args.get("cancelled") == "1",
+        "credit": request.args.get("credit") == "1",
+        "search": request.args.get("q"),
+        "limit": int(request.args.get("limit", 500)),
+        "offset": int(request.args.get("offset", 0))
+    }
+    
+    sales = get_store_sales(**filters)
+    return jsonify({"sales": sales, "count": len(sales)})
+
+
+@store_bp.route("/sales/<int:sale_id>", methods=["GET"])
+@store_manager_required
+def get_sale_detail(sale_id):
+    """جلب تفاصيل فاتورة + عناصرها"""
+    items = get_store_sale_items(sale_id)
+    
+    # Get the sale header
+    from database.db import get_db, dict_from_row
+    db = get_db()
+    sale = dict_from_row(db.execute("SELECT * FROM store_sales WHERE id = ?", [sale_id]).fetchone())
+    
+    if not sale:
+        return jsonify({"error": "Vente introuvable"}), 404
+    
+    return jsonify({"sale": sale, "items": items, "count": len(items)})
+
+
+# ============================================================
+# 📋 Purchase List (Liste des achats)
+# ============================================================
+
+@store_bp.route("/purchases/list", methods=["GET"])
+@store_manager_required
+def list_purchases_route():
+    """جلب المشتريات مع فلترة"""
+    store_id = g.current_user.get("store_id") or request.args.get("store_id", type=int)
+    
+    filters = {
+        "store_id": store_id,
+        "from_date": request.args.get("date_from"),
+        "to_date": request.args.get("date_to"),
+        "code": request.args.get("code"),
+        "fournisseur": request.args.get("fournisseur"),
+        "nom": request.args.get("nom"),
+        "cancelled": request.args.get("cancelled") == "1",
+        "search": request.args.get("q"),
+        "limit": int(request.args.get("limit", 500)),
+        "offset": int(request.args.get("offset", 0))
+    }
+    
+    purchases = get_store_purchases(**filters)
+    return jsonify({"purchases": purchases, "count": len(purchases)})
+
+
+@store_bp.route("/purchases/<int:purchase_id>/detail", methods=["GET"])
+@store_manager_required
+def get_purchase_detail_route(purchase_id):
+    """جلب تفاصيل فاتورة شراء"""
+    purchase = get_purchase_detail(purchase_id)
+    if not purchase:
+        return jsonify({"error": "Achat introuvable"}), 404
+    return jsonify(purchase)
+
+
+# ============================================================
+# 🖨️ Print
+# ============================================================
+
+@store_bp.route("/print/receipt/<int:sale_id>", methods=["GET"])
+@store_manager_required
+def print_receipt(sale_id):
+    """طباعة فاتورة (ترجع HTML للطباعة)"""
+    from database.db import get_db, dict_from_row
+    
+    db = get_db()
+    sale = dict_from_row(db.execute("""
+        SELECT ss.*, p.name as product_name, p.sku
+        FROM store_sales ss
+        JOIN products p ON p.id = ss.product_id
+        WHERE ss.id = ?
+    """, [sale_id]).fetchone())
+    
+    if not sale:
+        return jsonify({"error": "Sale not found"}), 404
+    
+    return jsonify({"receipt": sale})
+
+
+@store_bp.route("/print/barcode/<int:product_id>", methods=["GET"])
+@store_manager_required
+def print_barcode(product_id):
+    """طباعة باركود منتج"""
+    product = get_product(product_id)
+    if not product:
+        return jsonify({"error": "Product not found"}), 404
+    
+    qty = request.args.get("qty", 1, type=int)
+    
+    # تسجيل طباعة الباركود
+    db = get_db()
+    db.execute(
+        "INSERT INTO barcode_print_log (product_id, quantity, printed_by) VALUES (?, ?, ?)",
+        [product_id, qty, g.current_user.get("username", "store")]
+    )
+    db.commit()
+    
+    return jsonify({
+        "product": product,
+        "quantity": qty,
+        "barcode": product.get("barcode"),
+        "message": f"Barcode printed for {product['name']} x{qty}"
+    })

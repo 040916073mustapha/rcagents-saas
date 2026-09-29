@@ -1,0 +1,36 @@
+﻿# RC Agents â€” SaaS Core Render Blueprint
+# Multi-Tenant Backend + PostgreSQL
+
+services:
+  # â”€â”€â”€ Web Service â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  - type: web
+    name: rcagents-saas-core
+    env: python
+    region: frankfurt
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn server:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 --env AI_MODEL=meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo
+    healthCheckPath: /api/health
+    envVars:
+      - key: SAAS_DATABASE_URL
+        fromDatabase:
+          name: rcagents-db
+          property: connectionString
+      - key: SAAS_JWT_SECRET
+        generateValue: true
+      - key: AI_API_KEY
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: AI_MODEL
+        value: meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo
+
+  # â”€â”€â”€ PostgreSQL Database â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  - type: postgresql
+    name: rcagents-db
+    region: frankfurt
+    plan: free
+    version: 16
+    ipAllowList: []
+
+
