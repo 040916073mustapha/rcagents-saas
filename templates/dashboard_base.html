@@ -229,11 +229,10 @@
         </div>
 
     </div>
-    <input type="hidden" id="app-view-prop" value="{{ view }}">
     <script>
     function app() {
         return {
-            activeNav: document.getElementById('app-view-prop')?.value || 'overview',
+            activeNav: new URLSearchParams(window.location.search).get('view') || 'overview',
             navItems: [
                 { id: 'overview', label: 'Overview', icon: 'fa-solid fa-chart-pie', href: '/dashboard' },
                 { id: 'orders', label: 'Orders', icon: 'fa-solid fa-box-archive', href: '/dashboard?view=orders' },
