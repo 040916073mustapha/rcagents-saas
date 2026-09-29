@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RC Agents Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Cairo:wght@400;500;600;700;800&display=swap');
+  :root {
+    --rc-bg: #0A0A0F;
+    --rc-card: #111118;
+    --rc-card-hover: #1A1A25;
+    --rc-border: #1E1E30;
+    --neon-purple: #A855F7;
+    --neon-cyan: #06B6D4;
+    --neon-pink: #EC4899;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'JetBrains Mono', 'Cairo', sans-serif; background: var(--rc-bg); color: #E2E8F0; direction: rtl; }
+  .sidebar-scroll::-webkit-scrollbar { width: 3px; }
+  .sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+  .sidebar-scroll::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.3); border-radius: 10px; }
+  .sidebar-scroll::-webkit-scrollbar-thumb:hover { background: rgba(168,85,247,0.5); }
+  .card-hover-glow { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+  .card-hover-glow:hover { box-shadow: 0 0 20px -8px rgba(168,85,247,0.12); border-color: rgba(168,85,247,0.25); }
+  .nav-item { transition: all 0.2s ease; position: relative; }
+  .nav-item::before { content: ''; position: absolute; right: 0; top: 50%; transform: translateY(-50%); width: 3px; height: 0; background: linear-gradient(180deg, var(--neon-purple), var(--neon-cyan)); border-radius: 0 3px 3px 0; transition: height 0.3s ease; }
+  .nav-item-active::before { height: 70%; }
+  .nav-item:hover { background: rgba(168,85,247,0.05); }
+  .nav-item-active { background: rgba(168,85,247,0.08); }
+  .nav-item-active span { color: var(--neon-purple); }
+  .animate-fade-in { animation: fadeIn 0.3s ease forwards; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  textarea { font-family: 'JetBrains Mono', 'Cairo', sans-serif; }
+</style>
+</head>
+<body>
+<div class="min-h-screen flex" x-data="dashboardApp()" x-init="init()">
+  
+  <!-- Sidebar -->
+  <aside class="w-60 h-screen bg-[#0D0D15] border-l border-[#1E1E30] flex flex-col shrink-0 fixed right-0 top-0 z-30">
+    <div class="p-5 border-b border-[#1E1E30]">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-neon-purple to-neon-cyan flex items-center justify-center text-white font-bold text-sm shadow-[0_0_12px_-4px_rgba(168,85,247,0.3)]">R</div>
+        <div><h1 class="text-sm font-bold text-white">RC Agents</h1><p class="text-[9px] text-gray-600 font-mono tracking-wider uppercase">v2.4 Dashboard</p></div>
+      </div>
+    </div>
+    <nav class="flex-1 p-3 space-y-1 overflow-y-auto sidebar-scroll">
+      <template x-for="item in navItems" :key="item.id">
+        <button @click="activeNav = item.id" class="nav-item w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-xs text-gray-400 transition-all duration-200" :class="activeNav === item.id ? 'nav-item-active text-neon-purple bg-neon-purple/5' : 'hover:text-gray-300 hover:bg-white/5'">
+          <i :class="item.icon" class="w-4 text-center"></i>
+          <span x-text="item.label"></span>
+          <span x-show="item.badge" class="mr-auto text-[9px] font-mono px-1.5 py-0.5 rounded-full" :class="item.badgeClass" x-text="item.badge"></span>
+        </button>
+      </template>
+    </nav>
+    <div class="p-3 border-t border-[#1E1E30]">
+      <div class="flex items-center gap-3 px-3.5 py-2.5 rounded-lg bg-[#111118] border border-[#1E1E30]">
+        <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-400/20 to-emerald-400/5 border border-emerald-400/20 flex items-center justify-center text-emerald-400 text-[9px]"><i class="fa-solid fa-circle text-[6px] animate-pulse"></i></div>
+        <div><p class="text-[10px] font-mono text-emerald-400">System Online</p><p class="text-[8px] text-gray-600 font-mono">AI Agents Active</p></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="flex-1 mr-60 p-6 min-h-screen">
+    <div class="max-w-7xl mx-auto">
+      
+      <!-- ============================================================ -->
+      <!-- OVERVIEW / DASHBOARD -->
+      <!-- ============================================================ -->
+      <div x-show="activeNav === 'overview'"
+           x-data="{ stats: {revenue:0,total_orders:0,clients_count:0,delivery_rate:0}, orders: [], msgs: [], loading: true, convCount: 0, msgCount: 0 }"
+           x-init="Promise.all([
+              fetch('/api/dashboard/stats?store_id=1').then(r=>r.json()).then(d=>stats=d).catch(()=>{}),
+              fetch('/api/dashboard/recent-orders?store_id=1&limit=10').then(r=>r.json()).then(d=>orders=d).catch(()=>{}),
+              fetch('/api/messages?store_id=1&limit=200').then(r=>r.json()).then(d=>{ if(d.success){ msgs=d.messages; msgCount=d.count; let s=new Set(); d.messages.forEach(m=>s.add(m.sender_id+'|'+m.platform)); convCount=s.size } }).catch(()=>{})
+           ]).finally(()=>loading=false)">
+        
+        <div class="flex items-center justify-between mb-8">
+          <div>
+            <h1 class="text-xl font-bold text-white">مرحباً بعودتك، مصطفى <span class="animate-pulse">👋</span></h1>
+            <p class="text-xs text-gray-500 mt-1 font-mono">RC Agents Dashboard — جميع الأنظمة تعمل</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="bg-[#111118] border border-[#1E1E30] rounded-lg px-3 py-1.5 text-[10px] font-mono text-gray-400 flex items-center gap-2">
+              <i class="fa-regular fa-calendar text-neon-purple"></i>
+              <span>آخر 30 يوماً</span>
+            </div>
+            <div class="bg-[#111118] border border-[#1E1E30] rounded-lg px-2.5 py-1.5 text-[10px] text-gray-500 flex items-center gap-1.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span class="font-mono">مباشر</span>
+            </div>
+          </div>
+        </div>
+
+        <div x-show="loading" class="py-20 text-center">
+          <div class="inline-flex items-center gap-3 text-gray-500">
+            <i class="fa-solid fa-circle-notch text-neon-purple text-xl animate-spin"></i>
+            <span class="text-sm font-mono tracking-wider">جاري التحميل...</span>
+          </div>
+        </div>
+
+        <template x-if="!loading">
+          <div>
+            <!-- KPI Cards -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+              <div class="bg-[#111118] border border-[#1E1E30] rounded-xl p-5 card-hover-glow">
+                <div class="flex items-center justify-between mb-3">
+                  <span class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">الإيرادات</span>
+                  <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-neon-purple/10 to-neon-cyan/10 border border-neon-purple/20 flex items-center justify-center text-neon-purple"><i class="fa-solid fa-coins text-sm"></i></div>
+                </div>
+                <p class="text-2xl font-bold text-white font-mono" x-text="(stats.revenue||0).toLocaleString() + ' DZD'"></p>
+                <div class="mt-2 flex items-center gap-1.5">
+                  <span class="text-[10px] font-mono text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded flex items-center gap-0.5"><i class="fa-solid fa-arrow-up text-[9px]"></i></span>
+                  <span class="text-[10px] text-gray-500">الشهر الحالي</span>
+                </div>
+              </div>
+              <div class="bg-[#111118] border border-[#1E1E30] rounded-xl p-5 card-hover-glow">
+                <div class="flex items-center justify-between mb-3">
+                  <span class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">الطلبات</span>
+                  <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-neon-cyan/10 to-neon-purple/10 border border-neon-cyan/20 flex items-center justify-center text-neon-cyan"><i class="fa-solid fa-bag-shopping text-sm"></i></div>
+                </div>
+                <p class="text-2xl font-bold text-white font-mono" x-text="stats.total_orders || 0"></p>
+                <div class="mt-2 flex items-center gap-1.5">
+                  <span class="text-[10px] font-mono text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded"><span x-text="stats.fulfilled_orders || 0"> مكتمل</span></span>
+                  <span class="text-[10px] text-gray-500">· <span x-text="(stats.total_orders - (stats.fulfilled_orders||0)) + ' معلق'"></span></span>
+                </div>
+              </div>
+              <div class="bg-[#111118] border border-[#1E1E30] rounded-xl p-5 card-hover-glow">
+                <div class="flex items-center justify-between mb-3">
+                  <span class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">المحادثات</span>
+                  <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-neon-pink/10 to-neon-purple/10 border border-neon-pink/20 flex items-center justify-center text-neon-pink"><i class="fa-solid fa-comments text-sm"></i></div>
+                </div>
+                <p class="text-2xl font-bold text-white font-mono" x-text="convCount"></p>
+                <div class="mt-2 flex items-center gap-1.5">
+                  <span class="text-[10px] font-mono text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded"><span x-text="msgCount"></span> رسالة</span>
+                  <span class="text-[10px] text-gray-500">جميع القنوات</span>
+                </div>
+              </div>
+              <div class="bg-[#111118] border border-[#1E1E30] rounded-xl p-5 card-hover-glow">
+                <div class="flex items-center justify-between mb-3">
+                  <span class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">حالة النظام</span>
+                  <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-400/10 to-neon-purple/10 border border-emerald-400/20 flex items-center justify-center text-emerald-400"><i class="fa-solid fa-check-circle text-sm"></i></div>
+                </div>
+                <p class="text-2xl font-bold text-emerald-400 font-mono tracking-tight">100%</p>
+                <div class="mt-2 flex items-center gap-1.5">
+                  <span class="text-[10px] font-mono text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(52,211,153,0.4)]"></span> متصل</span>
+                  <span class="text-[10px] text-gray-500">جميع الوكلاء</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Recent Orders Table -->
+            <div class="bg-[#111118] border border-[#1E1E30] rounded-xl p-5 card-hover-glow mb-8">
+              <div class="flex items-center justify-between mb-4 pb-3 border-b border-[#1E1E30]">
+                <div class="flex items-center gap-2"><i class="fa-solid fa-receipt text-neon-purple text-xs"></i><h3 class="text-sm font-semibold text-white">آخر الطلبات</h3></div>
+              </div>
+              <template x-if="orders.length === 0">
+                <div class="text-center py-8 text-gray-500"><i class="fa-solid fa-inbox text-2xl mb-2 opacity-30"></i><p class="text-xs font-mono">لا توجد طلبات بعد</p></div>
+              </template>
+              <div x-show="orders.length > 0" class="overflow-x-auto">
+                <table class="w-full text-xs">
+                  <thead><tr class="text-gray-500 font-mono text-[10px] border-b border-[#1E1E30]">
+                    <th class="text-right py-2.5 pl-2 font-medium">العميل</th><th class="text-right py-2.5 pl-2 font-medium">المبلغ</th><th class="text-right py-2.5 pl-2 font-medium">الحالة المالية</th><th class="text-right py-2.5 pl-2 font-medium">التوصيل</th>
+                  </tr></thead>
+                  <tbody>
+                    <template x-for="o in orders.slice(0,8)" :key="o.id">
+                      <tr class="border-b border-[#1E1E30]/20 hover:bg-white/[0.02] transition-colors">
+                        <td class="py-3 pl-2"><div class="flex items-center gap-2.5"><div class="w-7 h-7 rounded-lg bg-gradient-to-br from-[#1A1A25] to-[#111118] border border-[#1E1E30] flex items-center justify-center text-[9px] text-gray-500 font-bold" x-text="(o.customer_name||'?')[0]"></div><p class="text-xs font-medium text-gray-200" x-text="o.customer_name||'Guest'"></p></div></td>
+                        <td class="py-3 pl-2"><span class="text-xs font-mono font-bold text-white" x-text="(o.total_price||0).toLocaleString()+' DZD'"></span></td>
+                        <td class="py-3 pl-2"><span class="text-[10px] font-mono font-semibold px-2 py-1 rounded border capitalize" :class="{'bg-emerald-400/10 text-emerald-400 border-emerald-400/30':o.financial_status==='paid','bg-yellow-400/10 text-yellow-400 border-yellow-400/30':o.financial_status==='pending','bg-rose-400/10 text-rose-400 border-rose-400/30':o.financial_status==='cancelled'}" x-text="o.financial_status"></span></td>
+                        <td class="py-3 pl-2"><span class="text-[10px] font-mono" :class="o.fulfillment_status==='fulfilled' ? 'text-emerald-400' : 'text-yellow-400'" x-text="o.fulfillment_status || 'unfulfilled'"></span></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- AI AGENTS SECTION -->
+      <!-- ============================================================ -->
+      <div x-show="activeNav === 'agents'"
+           x-data="{
+              agents: [], loading: true, erro: '', soss: '',
+              modalOpen: false, editingAgent: null, editingPrompt: '',
+              async fetchAgents() {
+                this.loading = true;
+                try { const r = await fetch('/api/agents/prompts?store_id=1'); const d = await r.json(); if(d.success) this.agents = d.agents; else this.erro = d.detail || 'فشل التحميل'; }
+                catch(e) { this.erro = 'خطأ في الشبكة'; }
+                this.loading = false;
+              },
+              openEditor(agent) { this.editingAgent = agent; this.editingPrompt = agent.prompt || ''; this.modalOpen = true; this.erro = ''; this.soss = ''; },
+              closeEditor() { this.modalOpen = false; this.editingAgent = null; this.editingPrompt = ''; },
+              async savePrompt() {
+                if(!this.editingAgent) return;
+                this.soss = ''; this.erro = '';
+                try {
+                  const r = await fetch('/api/agents/promptssave?store_id=1&agent_type='+encodeURIComponent(this.editingAgent.type)+'&prompt_text='+encodeURIComponent(this.editingPrompt));
+                  const d = await r.json();
+                  if(d.success) {
+                    this.soss = '✅ تم الحفظ: ' + this.editingAgent.name;
+                    const idx = this.agents.findIndex(a => a.type === this.editingAgent.type);
+                    if(idx !== -1) this.agents[idx].prompt = this.editingPrompt;
+                  } else { this.erro = d.detail || 'فشل الحفظ'; }
+                } catch(e) { this.erro = 'خطأ في الشبكة'; }
+              },
+              colorClass(c) {
+                const map = {purple:'bg-neon-purple/10 border-neon-purple/20 text-neon-purple',cyan:'bg-neon-cyan/10 border-neon-cyan/20 text-neon-cyan',blue:'bg-blue-400/10 border-blue-400/20 text-blue-400',pink:'bg-neon-pink/10 border-neon-pink/20 text-neon-pink',emerald:'bg-emerald-400/10 border-emerald-400/20 text-emerald-400',amber:'bg-amber-400/10 border-amber-400/20 text-amber-400',rose:'bg-rose-400/10 border-rose-400/20 text-rose-400'};
+                return map[c] || 'bg-gray-400/10 border-gray-400/20 text-gray-400';
+              },
+              promptPrev(p) { if(!p) return 'Default prompt — انقر للتعديل'; return p.substring(0,120) + (p.length > 120 ? '...' : ''); },
+              init() { this.fetchAgents(); }
+           }" x-init="init()">
+
+        <div class="flex items-center justify-between mb-6">
+          <div><h1 class="text-xl font-bold text-white">🧠 AI Agents</h1><p class="text-xs text-gray-500 mt-1 font-mono">تعديل System Prompt لكل وكيل ذكي</p></div>
+          <button @click="fetchAgents()" class="text-xs font-mono text-neon-purple hover:text-neon-cyan transition-colors"><i class="fa-solid fa-rotate mr-1"></i> تحديث</button>
+        </div>
+
+        <template x-if="erro">
+          <div class="bg-rose-400/10 border border-rose-400/30 rounded-xl p-3 mb-4 flex items-center gap-2.5"><i class="fa-solid fa-circle-exclamation text-rose-400"></i><p class="text-xs text-rose-300" x-text="erro"></p></div>
+        </template>
+        <template x-if="soss">
+          <div class="bg-emerald-400/10 border border-emerald-400/30 rounded-xl p-3 mb-4 flex items-center gap-2.5"><i class="fa-solid fa-check-circle text-emerald-400"></i><p class="text-xs text-emerald-300" x-text="soss"></p></div>
+        </template>
+
+        <div x-show="loading" class="py-16 text-center">
+          <div class="inline-flex items-center gap-3 text-gray-500"><i class="fa-solid fa-circle-notch text-neon-purple text-xl animate-spin"></i><span class="text-sm font-mono tracking-wider">جاري التحميل...</span></div>
+        </div>
+
+        <template x-if="!loading">
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <template x-for="agent in agents" :key="agent.type">
+              <div class="bg-[#111118] border border-[#1E1E30] rounded-xl p-5 card-hover-glow relative overflow-hidden group">
+                <div class="flex items-center justify-between mb-3">
+                  <div class="flex items-center gap-2.5">
+                    <div class="w-10 h-10 rounded-xl flex items-center justify-center border" :class="colorClass(agent.color)"><i :class="agent.icon" class="text-sm"></i></div>
+                    <div><h3 class="text-sm font-semibold text-white" x-text="agent.name"></h3><p class="text-[10px] font-mono text-gray-500 capitalize" x-text="agent.type.replace(/_/g,' ')"></p></div>
+                  </div>
+                  <span class="text-lg" x-text="agent.emoji"></span>
+                </div>
+                <div class="bg-[#0A0A0F] border border-[#1E1E30] rounded-lg p-3 mb-3 min-h-[60px]"><p class="text-[11px] text-gray-400 leading-relaxed" x-text="promptPrev(agent.prompt)"></p></div>
+                <button @click="openEditor(agent)" class="w-full flex items-center justify-center gap-2 bg-[#1A1A25]/50 border border-[#1E1E30] rounded-lg py-2.5 text-xs font-medium text-gray-300 hover:bg-neon-purple/10 hover:border-neon-purple/30 hover:text-neon-purple transition-all duration-200">
+                  <i class="fa-solid fa-pen-to-square text-[11px]"></i><span>تعديل System Prompt</span>
+                </button>
+                <div class="absolute top-3 left-3 w-1.5 h-1.5 rounded-full" :class="agent.prompt ? 'bg-emerald-400' : 'bg-gray-600'"></div>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <!-- Modal -->
+        <template x-if="modalOpen">
+          <div class="fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.7); backdrop-filter: blur(4px);">
+            <div class="bg-[#111118] border border-[#1E1E30] rounded-xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl shadow-neon-purple/10 overflow-hidden">
+              <div class="flex items-center justify-between p-5 border-b border-[#1E1E30] shrink-0">
+                <div class="flex items-center gap-3">
+                  <div class="w-10 h-10 rounded-xl flex items-center justify-center border" :class="colorClass(editingAgent.color)"><i :class="editingAgent.icon" class="text-sm"></i></div>
+                  <div><h3 class="text-base font-bold text-white" x-text="'تعديل: ' + editingAgent.name"></h3><p class="text-[10px] font-mono text-gray-500">System Prompt — يؤثر على ردود الـ AI</p></div>
+                </div>
+                <button @click="closeEditor()" class="w-8 h-8 rounded-lg bg-[#1A1A25] border border-[#1E1E30] flex items-center justify-center text-gray-400 hover:text-white hover:border-rose-400/30 transition-colors"><i class="fa-solid fa-xmark"></i></button>
+              </div>
+              <div class="p-5 flex-1 overflow-y-auto sidebar-scroll">
+                <div class="mb-3 flex items-center justify-between">
+                  <label class="text-xs font-semibold text-gray-300">System Prompt</label>
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] font-mono text-gray-600" x-text="editingPrompt.length + ' حرف'"></span>
+                    <button @click="editingPrompt = editingAgent.prompt || ''" class="text-[10px] font-mono text-gray-500 hover:text-neon-cyan transition-colors"><i class="fa-solid fa-rotate-left ml-0.5"></i> إعادة</button>
+                  </div>
+                </div>
+                <textarea x-model="editingPrompt" class="w-full bg-[#0A0A0F] border border-[#1E1E30]/50 rounded-lg p-4 text-sm text-gray-200 font-mono leading-relaxed focus:outline-none focus:border-neon-purple/50 transition-colors resize-y" rows="16" placeholder="أدخل System Prompt لهذا الوكيل..."></textarea>
+                <p class="text-[10px] font-mono text-gray-600 mt-2 flex items-center gap-1.5"><i class="fa-solid fa-info-circle text-neon-cyan"></i> التغييرات تدخل حيز التنفيذ فوراً في الرد التالي.</p>
+              </div>
+              <div class="flex items-center justify-start gap-3 p-4 border-t border-[#1E1E30] shrink-0">
+                <button @click="savePrompt()"
+                        class="px-5 py-2 rounded-lg bg-gradient-to-r from-neon-purple to-neon-cyan text-xs font-semibold text-white transition-all duration-200 hover:shadow-[0_0_15px_-3px_rgba(168,85,247,0.4)]">
+                  <i class="fa-solid fa-floppy-disk ml-1.5"></i> حفظ
+                </button>
+                <button @click="closeEditor()" class="px-4 py-2 rounded-lg border border-[#1E1E30] text-xs font-mono text-gray-400 hover:text-white hover:border-gray-500/50 transition-colors">إلغاء</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- LIVE CHAT SECTION -->
+      <!-- ============================================================ -->
+      <div x-show="activeNav === 'chat'"
+           x-data="{
+             conversations: [], loading: true, selectedConv: null, searchQuery: '', platformFilter: '', autoRefresh: null,
+             async fetchMessages() {
+               try {
+                 const r = await fetch('/api/messages?store_id=1&limit=200'); const d = await r.json();
+                 if(!d.success) return;
+                 const convMap = {};
+                 for(const m of d.messages) {
+                   const key = m.sender_id + '|' + m.platform;
+                   if(!convMap[key]) {
+                     convMap[key] = { sender_id: m.sender_id, platform: m.platform, name: m.sender_name || m.sender_id, messages: [], lastTime: m.created_at, lastMsg: m.message || m.reply || '' };
+                   }
+                   convMap[key].messages.push(m);
+                   if(m.created_at > convMap[key].lastTime) { convMap[key].lastTime = m.created_at; convMap[key].lastMsg = m.message || m.reply || ''; }
+                 }
+                 this.conversations = Object.values(convMap).sort((a,b) => new Date(b.lastTime) - new Date(a.lastTime));
+               } catch(e) { console.error(e); }
+               this.loading = false;
+             },
+             selectConv(conv) { this.selectedConv = conv; },
+             backToList() { this.selectedConv = null; },
+             platformIcon(p) { const m={messenger:'fa-brands fa-facebook-messenger text-blue-400',instagram:'fa-brands fa-instagram text-[#E1306C]',whatsapp:'fa-brands fa-whatsapp text-emerald-400',telegram:'fa-brands fa-telegram text-sky-400'}; return m[p]||'fa-solid fa-comment text-gray-400'; },
+             platformColor(p) { const m={messenger:'bg-blue-400/10 border-blue-400/30 text-blue-400',instagram:'bg-[#E1306C]/10 border-[#E1306C]/30 text-[#E1306C]',whatsapp:'bg-emerald-400/10 border-emerald-400/30 text-emerald-400',telegram:'bg-sky-400/10 border-sky-400/30 text-sky-400'}; return m[p]||'bg-gray-400/10 border-gray-400/30 text-gray-400'; },
+             formatTime(ts) { if(!ts) return ''; const d = new Date(ts+'Z'); return d.toLocaleDateString('ar-DZ',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); },
+             filtered() {
+               let r = this.conversations;
+               if(this.platformFilter) r = r.filter(c => c.platform === this.platformFilter);
+               if(this.searchQuery) { const q = this.searchQuery.toLowerCase(); r = r.filter(c => c.name.toLowerCase().includes(q) || c.sender_id.toLowerCase().includes(q) || c.lastMsg.toLowerCase().includes(q)); }
+               return r;
+             },
+             init() { this.fetchMessages(); this.autoRefresh = setInterval(() => this.fetchMessages(), 10000); },
+             destroy() { if(this.autoRefresh) clearInterval(this.autoRefresh); }
+           }" x-init="init()" @destroy.window="destroy()">
+
+        <div class="flex items-center justify-between mb-6">
+          <div><h1 class="text-xl font-bold text-white">💬 Live Chat</h1><p class="text-xs text-gray-500 mt-1 font-mono">محادثات العملاء عبر جميع القنوات</p></div>
+          <div class="flex items-center gap-3">
+            <span class="flex items-center gap-1.5 text-[10px] font-mono"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span><span class="text-gray-400">مباشر</span></span>
+            <span class="text-[10px] font-mono text-gray-500" x-text="conversations.length + ' محادثة'"></span>
+          </div>
+        </div>
+
+        <div class="flex gap-4 h-[calc(100vh-260px)] min-h-[400px]">
+          <!-- Conversation List -->
+          <div class="w-full" :class="selectedConv ? 'hidden lg:block lg:w-96' : 'block'">
+            <div class="bg-[#111118] border border-[#1E1E30] rounded-xl overflow-hidden h-full flex flex-col">
+              <div class="p-3 border-b border-[#1E1E30] space-y-2">
+                <div class="relative">
+                  <i class="fa-solid fa-search absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs"></i>
+                  <input type="text" x-model="searchQuery" placeholder="بحث في المحادثات..." class="w-full bg-[#0A0A0F] border border-[#1E1E30]/50 rounded-lg pr-8 pl-3 py-2 text-xs text-gray-200 font-mono placeholder-gray-600 focus:outline-none focus:border-neon-purple/50 transition-colors">
+                </div>
+                <div class="flex gap-1.5">
+                  <button @click="platformFilter=''" class="text-[10px] font-mono px-2.5 py-1 rounded-lg border transition-colors" :class="platformFilter==='' ? 'bg-neon-purple/20 border-neon-purple/50 text-neon-purple' : 'bg-[#1A1A25]/50 border-[#1E1E30] text-gray-500 hover:text-gray-300'">الكل</button>

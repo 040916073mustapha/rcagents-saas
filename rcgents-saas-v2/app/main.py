@@ -58,6 +58,12 @@ async def terms_of_service(request: Request):
     return templates.TemplateResponse("terms.html", {"request": request})
 
 
+# ── Dashboard ──────────────────────────────────────────
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard_page(request: Request):
+    return templates.TemplateResponse("dashboard.html", {"request": request})
+
+
 # ── Health check ────────────────────────────────────────
 @app.get("/health")
 async def health():

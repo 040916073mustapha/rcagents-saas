@@ -868,13 +868,26 @@ def generate_ai_reply(user_message, sender_id, image_url='', store_id=1):
         logger.error("AI reply error: " + _safe_str(e))
     return "Merci de nous contacter! Nous reviendrons vers vous bientot."
 
-def save_message_db(platform, sender_id, message, reply, store_id=1):
-    """Save a message and its reply to the database for dashboard display"""
+def _ensure_messages_sender_name_col():
+    """Add sender_name column if missing (migration helper)"""
     try:
         conn = _open_orders_db()
         c = conn.cursor()
-        c.execute("INSERT INTO messages (store_id, platform, sender_id, message, reply) VALUES (?,?,?,?,?)",
-                  (store_id, platform, sender_id, str(message)[:1000], str(reply)[:1000]))
+        c.execute("ALTER TABLE messages ADD COLUMN sender_name TEXT DEFAULT ''")
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass  # column already exists
+
+
+def save_message_db(platform, sender_id, message, reply, store_id=1, sender_name=''):
+    """Save a message and its reply to the database for dashboard display"""
+    try:
+        _ensure_messages_sender_name_col()
+        conn = _open_orders_db()
+        c = conn.cursor()
+        c.execute("INSERT INTO messages (store_id, platform, sender_id, sender_name, message, reply) VALUES (?,?,?,?,?,?)",
+                  (store_id, platform, sender_id, str(sender_name or '')[:120], str(message)[:1000], str(reply)[:1000]))
         conn.commit()
         conn.close()
         logger.info(f"[DB] Saved {platform} msg from {sender_id[:20] if sender_id else 'unknown'}: {str(message)[:40]}...")
@@ -1436,6 +1449,72 @@ def api_clients():
 @app.route('/api/shipments')
 def api_shipments():
     return json_utf8({"shipments": get_zr_shipments()})
+
+
+# ============================================================
+# 🧠 AI Agents Prompts API
+# ============================================================
+
+@app.route('/api/agents/prompts', methods=['GET'])
+def api_agents_prompts():
+    """GET: جميع Prompts الـ AI Agents"""
+    try:
+        store_id = request.args.get('store_id', 1, type=int)
+        from database.db import get_all_store_prompts
+        prompts = get_all_store_prompts(store_id)
+        agents_meta = [
+            {'type': 'customer_support', 'name': 'Customer Support', 'emoji': '🤝', 'icon': 'fa-solid fa-headset', 'color': 'blue'},
+            {'type': 'shipping_tracking', 'name': 'Shipping Tracking', 'emoji': '🚚', 'icon': 'fa-solid fa-truck-fast', 'color': 'amber'},
+            {'type': 'sales_agent', 'name': 'Sales Agent', 'emoji': '💰', 'icon': 'fa-solid fa-cart-shopping', 'color': 'purple'},
+            {'type': 'inventory_agent', 'name': 'Inventory Agent', 'emoji': '📦', 'icon': 'fa-solid fa-warehouse', 'color': 'emerald'},
+            {'type': 'campaign_agent', 'name': 'Campaign Agent', 'emoji': '🎯', 'icon': 'fa-solid fa-bullhorn', 'color': 'pink'},
+            {'type': 'analytics_agent', 'name': 'Analytics Agent', 'emoji': '📊', 'icon': 'fa-solid fa-chart-line', 'color': 'cyan'},
+            {'type': 'engagement_agent', 'name': 'Engagement Agent', 'emoji': '💕', 'icon': 'fa-solid fa-heart', 'color': 'rose'},
+        ]
+        result = []
+        for agent in agents_meta:
+            result.append({
+                **agent,
+                'prompt': prompts.get(agent['type'], ''),
+            })
+        return json_utf8({'success': True, 'agents': result, 'store_id': store_id})
+    except Exception as e:
+        app.logger.error(f"[AGENTS API] GET error: {e}")
+        return json_utf8({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/agents/prompts/save', methods=['POST'])
+def api_agents_prompts_save():
+    """POST: حفظ System Prompt لـ Agent معين"""
+    try:
+        data = request.get_json()
+        if not data:
+            return json_utf8({'success': False, 'error': 'Request body required'}), 400
+        store_id = data.get('store_id', 1)
+        agent_type = data.get('agent_type', '')
+        prompt_text = data.get('prompt_text', '')
+        if not agent_type:
+            return json_utf8({'success': False, 'error': 'agent_type is required'}), 400
+        from database.db import set_store_prompt
+        set_store_prompt(int(store_id), agent_type, prompt_text)
+        app.logger.info(f"[AGENTS API] Saved prompt for {agent_type} (store_id={store_id})")
+        return json_utf8({'success': True, 'agent_type': agent_type, 'store_id': store_id})
+    except Exception as e:
+        app.logger.error(f"[AGENTS API] POST error: {e}")
+        return json_utf8({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/agents/prompts/<agent_type>', methods=['GET'])
+def api_agent_prompt_by_type(agent_type):
+    """GET: جلب Prompt لـ Agent معين"""
+    try:
+        store_id = request.args.get('store_id', 1, type=int)
+        from database.db import get_store_prompt
+        prompt = get_store_prompt(store_id, agent_type)
+        return json_utf8({'success': True, 'agent_type': agent_type, 'prompt': prompt or '', 'store_id': store_id})
+    except Exception as e:
+        app.logger.error(f"[AGENTS API] GET {agent_type} error: {e}")
+        return json_utf8({'success': False, 'error': str(e)}), 500
 
 
 # --- Dashboard Pages ---
@@ -2119,7 +2198,7 @@ def api_wa_confirm_send():
 def api_messages():
     """Get recent messages across all platforms (Multi-Store)"""
     try:
-        limit = int(request.args.get("limit", 50))
+        limit = int(request.args.get("limit", 200))
         platform = request.args.get("platform", "")
         search = str(request.args.get("search", "")).strip()
         _sd = _get_store_id_from_subdomain()
@@ -2145,13 +2224,15 @@ def api_messages():
         conn.close()
         messages = []
         for r in rows:
+            sender_name_val = r[6] if len(r) > 6 else ''
             messages.append({
                 "id": r[0],
                 "platform": r[1],
                 "sender_id": r[2],
                 "message": r[3],
                 "reply": r[4],
-                "created_at": r[5]
+                "created_at": r[5],
+                "sender_name": sender_name_val or ''
             })
         return json_utf8({"success": True, "messages": messages, "count": len(messages)})
     except Exception as e:

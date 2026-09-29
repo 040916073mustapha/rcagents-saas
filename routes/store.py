@@ -1193,7 +1193,7 @@ def print_barcode(product_id):
 # 🧠 AI Agents Prompts API
 # ============================================================
 
-@store_bp.route("/api/agents/prompts", methods=["GET"])
+@store_bp.route("/agents/prompts", methods=["GET"])
 def api_agents_prompts():
     """GET: جلب جميع Prompts الـ AI Agents"""
     try:
@@ -1226,7 +1226,7 @@ def api_agents_prompts():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
-@store_bp.route("/api/agents/prompts", methods=["POST"])
+@store_bp.route("/agents/prompts", methods=["POST"])
 def api_agents_prompts_save():
     """POST: حفظ System Prompt لـ Agent معين"""
     try:
@@ -1246,7 +1246,7 @@ def api_agents_prompts_save():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
-@store_bp.route("/api/agents/prompts/<agent_type>", methods=["GET"])
+@store_bp.route("/agents/prompts/<agent_type>", methods=["GET"])
 def api_agent_prompt_by_type(agent_type):
     """GET: جلب Prompt لـ Agent معين"""
     try:

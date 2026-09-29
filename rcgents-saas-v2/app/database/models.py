@@ -112,6 +112,42 @@ class Conversation(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class StorePrompt(Base):
+    """Per-agent system prompts per store."""
+    __tablename__ = "store_prompts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    store_id = Column(Integer, nullable=False, index=True)
+    agent_type = Column(String(64), nullable=False)  # customer_support, sales_agent, campaign_agent, etc.
+    prompt_text = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        # One prompt per agent type per store
+        {"sqlite_autoincrement": True},
+    )
+
+
+class SaasMessage(Base):
+    """Messages from all platforms (inbound + outbound)."""
+    __tablename__ = "saas_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    store_id = Column(Integer, nullable=False, index=True)
+    platform = Column(String(32), nullable=False, index=True)  # messenger | instagram | whatsapp | telegram
+    sender_id = Column(String(128), nullable=False, index=True)
+    sender_name = Column(String(255), nullable=True)
+    message = Column(Text, nullable=True)  # inbound from customer
+    reply = Column(Text, nullable=True)    # outbound from AI
+    direction = Column(String(16), nullable=True)  # inbound | outbound
+    mid = Column(String(255), nullable=True)  # platform message ID
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        {"sqlite_autoincrement": True},
+    )
+
+
 def init_db():
     """Create all tables."""
     Base.metadata.create_all(bind=engine)

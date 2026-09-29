@@ -4,7 +4,7 @@ import datetime
 from typing import Optional, List
 from sqlalchemy.orm import Session
 
-from app.database.models import Tenant, Order, Customer, Product, Conversation
+from app.database.models import Tenant, Order, Customer, Product, Conversation, StorePrompt, SaasMessage
 
 
 # ── Tenants ──────────────────────────────────────────────────
@@ -163,3 +163,70 @@ def list_active_conversations(db: Session, store_id: int, limit: int = 50) -> Li
     return db.query(Conversation).filter(
         Conversation.store_id == store_id, Conversation.is_active == True
     ).order_by(Conversation.last_activity.desc()).limit(limit).all()
+
+
+# ── Store Prompts (AI Agent System Prompts) ────────────
+
+def get_store_prompt(db: Session, store_id: int, agent_type: str) -> Optional[str]:
+    """Get the system prompt for a specific agent type."""
+    row = db.query(StorePrompt).filter(
+        StorePrompt.store_id == store_id,
+        StorePrompt.agent_type == str(agent_type)
+    ).first()
+    return row.prompt_text if row else None
+
+
+def set_store_prompt(db: Session, store_id: int, agent_type: str, prompt_text: str) -> StorePrompt:
+    """Create or update system prompt for a specific agent type."""
+    row = db.query(StorePrompt).filter(
+        StorePrompt.store_id == store_id,
+        StorePrompt.agent_type == str(agent_type)
+    ).first()
+    if row:
+        row.prompt_text = prompt_text
+        row.updated_at = datetime.datetime.utcnow()
+    else:
+        row = StorePrompt(
+            store_id=store_id,
+            agent_type=str(agent_type),
+            prompt_text=prompt_text,
+        )
+        db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def get_all_store_prompts(db: Session, store_id: int) -> dict:
+    """Get all agent prompts as {agent_type: prompt_text} dict."""
+    rows = db.query(StorePrompt).filter(StorePrompt.store_id == store_id).all()
+    return {r.agent_type: r.prompt_text for r in rows}
+
+
+# ── SaasMessages (Live Chat) ────────────────────────────
+
+def save_saas_message(db: Session, store_id: int, platform: str, sender_id: str,
+                      message: str = None, reply: str = None, direction: str = None,
+                      sender_name: str = None, mid: str = None) -> SaasMessage:
+    """Save a chat message (inbound or outbound)."""
+    msg = SaasMessage(
+        store_id=store_id,
+        platform=str(platform),
+        sender_id=str(sender_id),
+        sender_name=sender_name,
+        message=message,
+        reply=reply,
+        direction=direction or ("inbound" if message else "outbound"),
+        mid=mid,
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+    return msg
+
+
+def list_saas_messages(db: Session, store_id: int, limit: int = 200, offset: int = 0) -> List[SaasMessage]:
+    """List messages ordered by most recent first."""
+    return db.query(SaasMessage).filter(
+        SaasMessage.store_id == store_id
+    ).order_by(SaasMessage.created_at.desc()).offset(offset).limit(limit).all()
