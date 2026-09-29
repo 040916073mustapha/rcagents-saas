@@ -862,13 +862,42 @@ def create_app():
     def api_conversation_messages(store_id, conv_id):
         """Get all messages for a specific conversation"""
         try:
-            from .database.models import Message, get_global_session
+            from .database.models import Message, Conversation, get_global_session
             db = get_global_session()
             logger.info(f"[MESSAGES] Fetching: store={store_id} conv={conv_id}")
-            # Use only conversation_id (unique identifier) — store_id filter may fail due to type mismatch
+
+            # Strategy 1: Try by conversation_id (UUID from our system)
             messages = db.query(Message).filter(
                 Message.conversation_id == conv_id
             ).order_by(Message.created_at.asc()).limit(100).all()
+
+            # Strategy 2: If no messages found, try by platform_conversation_id (PSID from Meta)
+            if not messages:
+                logger.info(f"[MESSAGES] No messages by conversation_id, trying platform ID...")
+                # First, find the conversation to get both IDs
+                conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
+                if conv:
+                    logger.info(f"[MESSAGES] Found conv: id={conv.id} platform_id={conv.platform_conversation_id} customer_id={conv.customer_platform_id}")
+                    # Try platform_conversation_id
+                    messages = db.query(Message).filter(
+                        Message.conversation_id == conv.id
+                    ).order_by(Message.created_at.asc()).limit(100).all()
+                    if not messages:
+                        # Try customer_platform_id (the PSID / sender ID)
+                        messages = db.query(Message).filter(
+                            Message.conversation_id == conv.platform_conversation_id
+                        ).order_by(Message.created_at.asc()).limit(100).all()
+                        if not messages:
+                            # Try by matching channel + customer_platform_id
+                            messages = db.query(Message).filter(
+                                Message.channel == conv.channel,
+                                Message.conversation_id == conv.customer_platform_id
+                            ).order_by(Message.created_at.asc()).limit(100).all()
+                else:
+                    # Direct fallback: try conv_id as platform_conversation_id
+                    messages = db.query(Message).filter(
+                        Message.conversation_id == conv_id
+                    ).order_by(Message.created_at.asc()).limit(100).all()
 
             logger.info(f"[MESSAGES] Found {len(messages)} messages for conv={conv_id}")
 
