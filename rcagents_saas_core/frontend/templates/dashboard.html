@@ -20,6 +20,7 @@
     searchQuery: '',
     orderSearch: '',
     orderStatusFilter: '',
+    loadingMessages: false,
 
     // Agents state
     agents: [],
@@ -64,6 +65,9 @@
 
         // Load agents
         this.loadAgents();
+
+        // Load conversations for chat
+        this.loadConversations();
 
         this.loading = false;
 
@@ -153,11 +157,12 @@
 
     async loadConversationMessages(convId) {
         this.selectedConvId = convId;
+        this.loadingMessages = true;
+        this.convMessages = [];
         try {
             const res = await fetch(`/api/conversations/${this.storeId}/${convId}/messages`);
             const data = await res.json();
             this.convMessages = data.messages || [];
-            // Scroll to bottom
             this.$nextTick(() => {
                 const container = document.getElementById('chat-messages-container');
                 if (container) container.scrollTop = container.scrollHeight;
@@ -165,6 +170,8 @@
         } catch (e) {
             console.error('Load messages error:', e);
             this.convMessages = [];
+        } finally {
+            this.loadingMessages = false;
         }
     },
 
@@ -908,9 +915,25 @@ x-init="init()">
                             <h3 class="text-sm font-semibold text-white" x-text="selectedConvId ? 'Messages' : 'Select Conversation'"></h3>
                         </div>
                         <div id="chat-messages-container" class="flex-1 space-y-3 overflow-y-auto" style="max-height: 420px;">
-                            <template x-if="selectedConvId && convMessages.length > 0">
+                            <!-- Loading state -->
+                            <div x-show="selectedConvId && loadingMessages" class="text-center py-10 text-gray-500">
+                                <i class="fa-solid fa-spinner text-2xl mb-2 animate-spin"></i>
+                                <p class="text-xs font-mono">Loading messages...</p>
+                            </div>
+                            <!-- Empty state -->
+                            <div x-show="selectedConvId && !loadingMessages && convMessages.length === 0" class="text-center py-10 text-gray-500">
+                                <i class="fa-solid fa-inbox text-3xl mb-3 opacity-30"></i>
+                                <p class="text-xs font-mono">No messages in this conversation</p>
+                            </div>
+                            <!-- No selection -->
+                            <div x-show="!selectedConvId" class="text-center py-12 text-gray-500">
+                                <i class="fa-solid fa-hand-pointer text-3xl mb-3 opacity-30"></i>
+                                <p class="text-xs font-mono">Select a conversation to view messages</p>
+                            </div>
+                            <!-- Messages list -->
+                            <div x-show="selectedConvId && !loadingMessages" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100">
                                 <template x-for="m in convMessages" :key="m.id">
-                                    <div class="flex" :class="m.role === 'user' ? 'justify-start' : 'justify-end'">
+                                    <div class="flex mb-3" :class="m.role === 'user' ? 'justify-start' : 'justify-end'">
                                         <div class="max-w-[85%] rounded-xl px-4 py-2.5 text-xs" :class="m.role === 'user' ? 'bg-rc-card-hover/50 border border-rc-border/40 text-gray-300' : 'bg-gradient-to-r from-neon-purple/20 to-neon-cyan/10 border border-neon-purple/20 text-gray-200'">
                                             <template x-if="m.content_type === 'image' && m.image_url">
                                                 <div class="mb-2">
@@ -928,19 +951,7 @@ x-init="init()">
                                         </div>
                                     </div>
                                 </template>
-                            </template>
-                            <template x-if="selectedConvId && convMessages.length === 0">
-                                <div class="text-center py-10 text-gray-500">
-                                    <i class="fa-solid fa-spinner text-2xl mb-2 animate-spin"></i>
-                                    <p class="text-xs font-mono">Loading messages...</p>
-                                </div>
-                            </template>
-                            <template x-if="!selectedConvId">
-                                <div class="text-center py-12 text-gray-500">
-                                    <i class="fa-solid fa-hand-pointer text-3xl mb-3 opacity-30"></i>
-                                    <p class="text-xs font-mono">Select a conversation to view messages</p>
-                                </div>
-                            </template>
+                            </div>
                         </div>
                     </div>
                 </div>
