@@ -21,6 +21,17 @@
     orderSearch: '',
     orderStatusFilter: '',
 
+    // Agents state
+    agents: [],
+    editingAgent: null,
+    editingPrompt: '',
+    savingAgent: false,
+    agentSaved: false,
+
+    // Chat state
+    chatSearch: '',
+    chatPlatform: '',
+
     async init() {
         const params = new URLSearchParams(window.location.search);
         const v = params.get('view');
@@ -51,12 +62,87 @@
             this.clients = window.MOCK_CLIENTS || [];
         }
 
+        // Load agents
+        this.loadAgents();
+
         this.loading = false;
+
+        // Auto-refresh conversations every 10 seconds
+        setInterval(() => {
+            if (this.view === 'chat') {
+                this.loadConversations();
+            }
+        }, 10000);
+    },
+
+    async loadAgents() {
+        try {
+            const res = await fetch(`/api/agents/prompts?store_id=${this.storeId}`);
+            const data = await res.json();
+            if (data.success) this.agents = data.agents;
+        } catch (e) {
+            console.error('Load agents error:', e);
+        }
+    },
+
+    openAgentEditor(agent) {
+        this.editingAgent = agent;
+        this.editingPrompt = agent.prompt || '';
+        this.agentSaved = false;
+    },
+
+    closeAgentEditor() {
+        this.editingAgent = null;
+        this.editingPrompt = '';
+        this.agentSaved = false;
+    },
+
+    async saveAgentPrompt() {
+        if (!this.editingAgent) return;
+        this.savingAgent = true;
+        try {
+            const res = await fetch('/api/agents/prompts', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    store_id: this.storeId,
+                    agent_type: this.editingAgent.type,
+                    prompt: this.editingPrompt
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                this.agentSaved = true;
+                // Update local agent data
+                const idx = this.agents.findIndex(a => a.type === this.editingAgent.type);
+                if (idx !== -1) {
+                    this.agents[idx].prompt = this.editingPrompt;
+                    this.agents[idx].is_default = false;
+                }
+                setTimeout(() => this.closeAgentEditor(), 1500);
+            } else {
+                alert('Error saving: ' + (data.error || 'unknown'));
+            }
+        } catch (e) {
+            console.error('Save agent error:', e);
+            alert('Network error saving prompt');
+        } finally {
+            this.savingAgent = false;
+        }
+    },
+
+    resetAgentPrompt(agent) {
+        if (!confirm('Reset this agent to default prompt?')) return;
+        this.editingAgent = agent;
+        this.editingPrompt = ''; // Reset triggers default on backend
+        this.saveAgentPrompt();
     },
 
     async loadConversations() {
         try {
-            const res = await fetch(`/api/conversations/${this.storeId}?limit=50`);
+            const params = new URLSearchParams({store_id: this.storeId, limit: '50'});
+            if (this.chatPlatform) params.set('platform', this.chatPlatform);
+            const res = await fetch(`/api/messages?${params}`);
             const data = await res.json();
             this.conversations = data.conversations || [];
         } catch (e) {
@@ -71,6 +157,11 @@
             const res = await fetch(`/api/conversations/${this.storeId}/${convId}/messages`);
             const data = await res.json();
             this.convMessages = data.messages || [];
+            // Scroll to bottom
+            this.$nextTick(() => {
+                const container = document.getElementById('chat-messages-container');
+                if (container) container.scrollTop = container.scrollHeight;
+            });
         } catch (e) {
             console.error('Load messages error:', e);
             this.convMessages = [];
@@ -637,110 +728,166 @@ x-init="init()">
                 <div class="flex items-center justify-between mb-6">
                     <div>
                         <h2 class="text-lg font-bold text-white flex items-center gap-2"><i class="fa-solid fa-network-wired text-neon-cyan"></i> AI Agents</h2>
-                        <p class="text-xs text-gray-500 font-mono mt-1">AI-powered sales and support agents</p>
+                        <p class="text-xs text-gray-500 font-mono mt-1">AI-powered sales and support agents — Click any agent to edit its system prompt</p>
+                    </div>
+                    <button @click="loadAgents()" class="bg-rc-card-hover/50 border border-rc-border/40 rounded-lg px-3 py-2 text-xs text-gray-400 font-mono hover:text-white hover:border-gray-500/50 transition-colors">
+                        <i class="fa-solid fa-rotate"></i> Refresh
+                    </button>
+                </div>
+
+                <!-- Loading -->
+                <div x-show="agents.length === 0" class="py-10 text-center">
+                    <div class="inline-flex items-center gap-3 text-gray-500">
+                        <i class="fa-solid fa-circle-notch text-neon-purple text-xl animate-spin"></i>
+                        <span class="text-sm font-mono tracking-wider">LOADING AGENTS...</span>
                     </div>
                 </div>
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    <div class="bg-rc-card border border-rc-border/60 rounded-xl p-5 card-hover-glow">
-                        <div class="flex items-center gap-3 mb-4">
-                            <div class="w-12 h-12 rounded-xl bg-neon-purple/10 border border-neon-purple/20 flex items-center justify-center text-neon-purple text-xl"><i class="fa-solid fa-cart-shopping"></i></div>
-                            <div><h3 class="text-sm font-semibold text-white">Sales Agent</h3><p class="text-[10px] font-mono text-gray-500">Product recommendations and sales</p></div>
-                        </div>
-                        <div class="space-y-2">
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">Status</span><span class="text-emerald-400 font-mono text-[10px]">Active</span></div>
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">Channels</span><span class="text-gray-300 font-mono text-[10px]">WhatsApp, Messenger, Instagram</span></div>
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">Products</span><span class="text-neon-cyan font-mono text-[10px]" x-text="aiBrain.product_count || 0"></span></div>
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">Resolution</span><span class="text-emerald-400 font-mono text-[10px]" x-text="(aiBrain.resolution_rate || 0) + '%'"></span></div>
+
+                <template x-if="agents.length > 0">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <template x-for="agent in agents" :key="agent.type">
+                            <div class="bg-rc-card border border-rc-border/60 rounded-xl p-5 card-hover-glow group cursor-pointer hover:border-neon-cyan/40 transition-all duration-300" @click="openAgentEditor(agent)">
+                                <div class="flex items-center gap-3 mb-4">
+                                    <div class="w-12 h-12 rounded-xl flex items-center justify-center text-xl border" :class="agent.color + ' ' + agent.text_color" :style="{borderColor: 'currentColor', opacity: '0.3'}">
+                                        <i :class="agent.icon"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="text-sm font-semibold text-white" x-text="agent.name"></h3>
+                                        <p class="text-[10px] font-mono text-gray-500" x-text="agent.description"></p>
+                                    </div>
+                                </div>
+                                <div class="space-y-2">
+                                    <div class="flex justify-between text-xs">
+                                        <span class="text-gray-400">Status</span>
+                                        <span class="text-emerald-400 font-mono text-[10px]">Active</span>
+                                    </div>
+                                    <div class="flex justify-between text-xs">
+                                        <span class="text-gray-400">Prompt</span>
+                                        <span class="text-[10px] font-mono" :class="agent.is_default ? 'text-gray-500' : 'text-neon-cyan'">
+                                            <span x-text="agent.is_default ? 'Default' : 'Custom'" class="font-semibold"></span>
+                                            <span x-text="' (' + (agent.prompt?.length || 0) + ' chars)'"></span>
+                                        </span>
+                                    </div>
+                                    <div class="mt-3 pt-3 border-t border-rc-border/30 text-center">
+                                        <span class="text-[10px] font-mono text-neon-cyan group-hover:text-white transition-colors">
+                                            <i class="fa-solid fa-pen-to-square"></i> Edit System Prompt
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+
+                <!-- ====== Agent Prompt Editor Modal ====== -->
+                <template x-teleport="body">
+                    <div x-show="editingAgent" class="fixed inset-0 z-50 flex items-center justify-center p-4" x-cloak>
+                        <!-- Backdrop -->
+                        <div class="absolute inset-0 bg-black/70 backdrop-blur-sm" @click="closeAgentEditor()"></div>
+                        <!-- Modal -->
+                        <div class="relative bg-rc-card border border-rc-border/60 rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden shadow-2xl" @click.stop>
+                            <div class="flex items-center justify-between px-6 py-4 border-b border-rc-border/40">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-xl flex items-center justify-center border" :class="editingAgent?.color + ' ' + editingAgent?.text_color" :style="{borderColor: 'currentColor', opacity: '0.3'}">
+                                        <i :class="editingAgent?.icon"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="text-base font-bold text-white" x-text="editingAgent?.name + ' System Prompt'"></h3>
+                                        <p class="text-[10px] font-mono text-gray-500" x-text="editingAgent?.description"></p>
+                                    </div>
+                                </div>
+                                <button @click="closeAgentEditor()" class="w-8 h-8 rounded-lg bg-rc-card-hover/50 border border-rc-border/40 flex items-center justify-center text-gray-400 hover:text-white hover:border-gray-500/50 transition-colors">
+                                    <i class="fa-solid fa-times"></i>
+                                </button>
+                            </div>
+                            <div class="p-6 overflow-y-auto" style="max-height: calc(85vh - 140px);">
+                                <div class="mb-4">
+                                    <label class="text-xs font-mono text-gray-400 block mb-2">System Prompt (defines AI behavior for this agent)</label>
+                                    <textarea x-model="editingPrompt" class="w-full h-64 bg-rc-bg border border-rc-border/50 rounded-xl p-4 text-xs text-gray-200 font-mono leading-relaxed focus:outline-none focus:border-neon-purple/50 transition-colors resize-none" placeholder="Enter system prompt for this agent..."></textarea>
+                                    <div class="flex justify-between items-center mt-2">
+                                        <span class="text-[10px] font-mono" :class="editingPrompt.length > 2000 ? 'text-rose-400' : 'text-gray-500'" x-text="editingPrompt.length + ' characters'"></span>
+                                        <button @click="editingPrompt = ''" class="text-[10px] font-mono text-gray-500 hover:text-gray-300 transition-colors">
+                                            <i class="fa-solid fa-rotate-left"></i> Reset to default
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between px-6 py-4 border-t border-rc-border/40">
+                                <div class="flex items-center gap-2">
+                                    <template x-if="agentSaved">
+                                        <span class="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
+                                            <i class="fa-solid fa-check-circle"></i> Saved successfully!
+                                        </span>
+                                    </template>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <button @click="closeAgentEditor()" class="px-4 py-2 rounded-lg text-xs font-mono text-gray-400 border border-rc-border/40 hover:text-white hover:border-gray-500/50 transition-colors">
+                                        Cancel
+                                    </button>
+                                    <button @click="saveAgentPrompt()" :disabled="savingAgent" class="px-5 py-2 rounded-lg text-xs font-mono font-semibold text-white transition-all duration-300" style="background: linear-gradient(135deg, #a855f7, #06b6d4);" :class="savingAgent ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'">
+                                        <i class="fa-solid" :class="savingAgent ? 'fa-circle-notch animate-spin' : 'fa-save'"></i>
+                                        <span x-text="savingAgent ? 'Saving...' : 'Save Prompt'"></span>
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </div>
-                    <div class="bg-rc-card border border-rc-border/60 rounded-xl p-5 card-hover-glow">
-                        <div class="flex items-center gap-3 mb-4">
-                            <div class="w-12 h-12 rounded-xl bg-neon-pink/10 border border-neon-pink/20 flex items-center justify-center text-neon-pink text-xl"><i class="fa-solid fa-bullhorn"></i></div>
-                            <div><h3 class="text-sm font-semibold text-white">Campaign Agent</h3><p class="text-[10px] font-mono text-gray-500">Promotions and seasonal offers</p></div>
-                        </div>
-                        <div class="space-y-2">
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">Status</span><span class="text-emerald-400 font-mono text-[10px]">Active</span></div>
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">Active Campaigns</span><span class="text-gray-300 font-mono text-[10px]">Winter Sale, Flash Deals</span></div>
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">Channels</span><span class="text-gray-300 font-mono text-[10px]">WhatsApp Broadcast</span></div>
-                        </div>
-                    </div>
-                    <div class="bg-rc-card border border-rc-border/60 rounded-xl p-5 card-hover-glow">
-                        <div class="flex items-center gap-3 mb-4">
-                            <div class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-xl"><i class="fa-solid fa-heart"></i></div>
-                            <div><h3 class="text-sm font-semibold text-white">Engagement Agent</h3><p class="text-[10px] font-mono text-gray-500">Customer loyalty and follow-ups</p></div>
-                        </div>
-                        <div class="space-y-2">
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">Status</span><span class="text-emerald-400 font-mono text-[10px]">Active</span></div>
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">Active Conversations</span><span class="text-gray-300 font-mono text-[10px]" x-text="aiBrain.active_conversations || 0"></span></div>
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">Handled</span><span class="text-neon-cyan font-mono text-[10px]" x-text="(aiBrain.messages_handled || 0).toLocaleString()"></span></div>
-                        </div>
-                    </div>
-                    <div class="bg-rc-card border border-rc-border/60 rounded-xl p-5 card-hover-glow">
-                        <div class="flex items-center gap-3 mb-4">
-                            <div class="w-12 h-12 rounded-xl bg-amber-400/10 border border-amber-400/20 flex items-center justify-center text-amber-400 text-xl"><i class="fa-solid fa-chart-line"></i></div>
-                            <div><h3 class="text-sm font-semibold text-white">Analytics Agent</h3><p class="text-[10px] font-mono text-gray-500">Reports and KPIs</p></div>
-                        </div>
-                        <div class="space-y-2">
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">Status</span><span class="text-emerald-400 font-mono text-[10px]">Active</span></div>
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">Reports</span><span class="text-gray-300 font-mono text-[10px]">Daily, Weekly, Monthly</span></div>
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">Data Sources</span><span class="text-gray-300 font-mono text-[10px]">Shopify, Conversations</span></div>
-                        </div>
-                    </div>
-                    <div class="bg-rc-card border border-rc-border/60 rounded-xl p-5 card-hover-glow">
-                        <div class="flex items-center gap-3 mb-4">
-                            <div class="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 text-xl"><i class="fa-solid fa-headset"></i></div>
-                            <div><h3 class="text-sm font-semibold text-white">Support Agent</h3><p class="text-[10px] font-mono text-gray-500">Customer service</p></div>
-                        </div>
-                        <div class="space-y-2">
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">Status</span><span class="text-emerald-400 font-mono text-[10px]">Online</span></div>
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">Channels</span><span class="text-gray-300 font-mono text-[10px]">All Platforms</span></div>
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">Response</span><span class="text-emerald-400 font-mono text-[10px]">AI Instant</span></div>
-                        </div>
-                    </div>
-                    <div class="bg-rc-card border border-rc-border/60 rounded-xl p-5 card-hover-glow">
-                        <div class="flex items-center gap-3 mb-4">
-                            <div class="w-12 h-12 rounded-xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-center text-teal-400 text-xl"><i class="fa-solid fa-truck-fast"></i></div>
-                            <div><h3 class="text-sm font-semibold text-white">Shipping Agent</h3><p class="text-[10px] font-mono text-gray-500">ZR Express tracking</p></div>
-                        </div>
-                        <div class="space-y-2">
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">Status</span><span class="text-emerald-400 font-mono text-[10px]">Active</span></div>
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">Coverage</span><span class="text-gray-300 font-mono text-[10px]">58 Wilayas</span></div>
-                            <div class="flex justify-between text-xs"><span class="text-gray-400">API</span><span class="text-gray-300 font-mono text-[10px]">ZR Express</span></div>
-                        </div>
-                    </div>
-                </div>
+                </template>
             </div>
             <!-- ====== END AI AGENTS ====== -->
 
             <!-- ====== LIVE CHAT ====== -->
-            <div x-show="view === 'chat'">
+            <div x-show="view === 'chat'" x-data="{ chatRefreshInterval: null }">
                 <div class="flex items-center justify-between mb-6">
                     <div>
                         <h2 class="text-lg font-bold text-white flex items-center gap-2"><i class="fa-solid fa-comments text-neon-cyan"></i> Live Chat Inbox</h2>
-                        <p class="text-xs text-gray-500 font-mono mt-1">Multi-channel conversation inbox</p>
+                        <p class="text-xs text-gray-500 font-mono mt-1">Multi-channel conversation inbox — auto-refreshes every 10s</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <span class="text-[10px] font-mono text-emerald-400">LIVE</span>
                     </div>
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    <!-- Conversation List -->
                     <div class="lg:col-span-2 bg-rc-card border border-rc-border/60 rounded-xl overflow-hidden card-hover-glow">
                         <div class="p-4 border-b border-rc-border/40">
-                            <input type="text" placeholder="Search conversations..." class="w-full bg-rc-bg border border-rc-border/50 rounded-lg px-3 py-2 text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-neon-purple/40">
+                            <div class="flex gap-2">
+                                <div class="relative flex-1">
+                                    <i class="fa-solid fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs"></i>
+                                    <input type="text" x-model="chatSearch" placeholder="Search conversations..." class="w-full bg-rc-bg border border-rc-border/50 rounded-lg pl-9 pr-3 py-2 text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-neon-purple/40">
+                                </div>
+                                <select x-model="chatPlatform" @change="loadConversations()" class="bg-rc-bg border border-rc-border/50 rounded-lg px-2 py-2 text-xs text-gray-300 font-mono focus:outline-none focus:border-neon-purple/40">
+                                    <option value="">All Channels</option>
+                                    <option value="messenger">Messenger</option>
+                                    <option value="instagram">Instagram</option>
+                                    <option value="whatsapp">WhatsApp</option>
+                                </select>
+                            </div>
                         </div>
-                        <div class="divide-y divide-rc-border/20">
-                            <template x-for="c in conversations" :key="c.id">
-                                <div class="p-4 hover:bg-rc-card-hover/30 cursor-pointer transition-colors" @click="loadConversationMessages(c.id)">
+                        <div class="divide-y divide-rc-border/20" style="max-height: 500px; overflow-y: auto;">
+                            <template x-for="c in conversations.filter(x => {
+                                if (!chatSearch) return true;
+                                const q = chatSearch.toLowerCase();
+                                return (x.customer_name||'').toLowerCase().includes(q) ||
+                                       (x.customer_platform_id||'').toLowerCase().includes(q) ||
+                                       (x.last_user_message||'').toLowerCase().includes(q);
+                            })" :key="c.id">
+                                <div class="p-4 hover:bg-rc-card-hover/30 cursor-pointer transition-colors" :class="selectedConvId === c.id ? 'bg-rc-card-hover/40 border-l-2 border-neon-purple' : ''" @click="loadConversationMessages(c.id)">
                                     <div class="flex items-center gap-3">
-                                        <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-rc-card-hover to-rc-card border border-rc-border/40 flex items-center justify-center text-xs font-bold text-gray-400 flex-shrink-0" x-text="(c.customer_name || c.customer_platform_id || '?')[0]"></div>
+                                        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-rc-card-hover to-rc-card border border-rc-border/40 flex items-center justify-center text-xs font-bold text-gray-400 flex-shrink-0" x-text="(c.customer_name || c.customer_platform_id || '?')[0].toUpperCase()"></div>
                                         <div class="flex-1 min-w-0">
                                             <div class="flex items-center justify-between">
                                                 <span class="text-sm font-medium text-gray-200 truncate" x-text="c.customer_name || c.customer_platform_id || 'Unknown'"></span>
-                                                <span class="text-[10px] font-mono text-gray-500" x-text="formatDate(c.updated_at)"></span>
+                                                <span class="text-[10px] font-mono text-gray-500 flex-shrink-0" x-text="formatDate(c.updated_at)"></span>
                                             </div>
                                             <div class="flex items-center gap-2 mt-1">
-                                                <span class="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-full border" :class="channelStyle(c.channel).text + ' ' + channelStyle(c.channel).border">
+                                                <span class="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-full border flex-shrink-0" :class="channelStyle(c.channel).text + ' ' + channelStyle(c.channel).border">
                                                     <i :class="channelStyle(c.channel).icon + ' text-[9px]'"></i>
-                                                    <span x-text="c.channel"></span>
+                                                    <span x-text="c.channel.charAt(0).toUpperCase() + c.channel.slice(1)"></span>
                                                 </span>
-                                                <span class="text-[10px] text-gray-500 truncate" x-text="c.last_user_message || 'No messages'"></span>
+                                                <span class="text-[10px] text-gray-500 truncate" x-text="c.last_user_message || c.last_ai_reply || 'No messages'"></span>
+                                                <span x-show="c.message_count > 1" class="text-[9px] font-mono text-gray-600 flex-shrink-0" x-text="'(' + c.message_count + ' msgs)'"></span>
                                             </div>
                                         </div>
                                     </div>
@@ -749,31 +896,52 @@ x-init="init()">
                             <template x-if="conversations.length === 0">
                                 <div class="p-8 text-center text-gray-500">
                                     <i class="fa-solid fa-inbox text-3xl mb-3 opacity-30"></i>
-                                    <p class="text-xs font-mono">No conversations yet</p>
+                                    <p class="text-xs font-mono">No conversations yet — messages will appear here in real-time</p>
                                 </div>
                             </template>
                         </div>
                     </div>
-                    <div class="bg-rc-card border border-rc-border/60 rounded-xl p-5 card-hover-glow">
+                    <!-- Message Detail -->
+                    <div class="bg-rc-card border border-rc-border/60 rounded-xl p-5 card-hover-glow flex flex-col">
                         <div class="flex items-center gap-2 mb-4 pb-3 border-b border-rc-border/40">
                             <i class="fa-solid fa-message text-neon-purple text-xs"></i>
-                            <h3 class="text-sm font-semibold text-white">Messages</h3>
+                            <h3 class="text-sm font-semibold text-white" x-text="selectedConvId ? 'Messages' : 'Select Conversation'"></h3>
                         </div>
-                        <template x-if="selectedConvId">
-                            <div class="space-y-3 max-h-96 overflow-y-auto">
+                        <div id="chat-messages-container" class="flex-1 space-y-3 overflow-y-auto" style="max-height: 420px;">
+                            <template x-if="selectedConvId && convMessages.length > 0">
                                 <template x-for="m in convMessages" :key="m.id">
                                     <div class="flex" :class="m.role === 'user' ? 'justify-start' : 'justify-end'">
-                                        <div class="max-w-[80%] rounded-lg px-3 py-2 text-xs" :class="m.role === 'user' ? 'bg-rc-card-hover/50 border border-rc-border/40 text-gray-300' : 'bg-neon-purple/10 border border-neon-purple/20 text-neon-purple'">
-                                            <p x-text="m.content"></p>
-                                            <p class="text-[9px] font-mono text-gray-600 mt-1" x-text="formatDate(m.created_at)"></p>
+                                        <div class="max-w-[85%] rounded-xl px-4 py-2.5 text-xs" :class="m.role === 'user' ? 'bg-rc-card-hover/50 border border-rc-border/40 text-gray-300' : 'bg-gradient-to-r from-neon-purple/20 to-neon-cyan/10 border border-neon-purple/20 text-gray-200'">
+                                            <template x-if="m.content_type === 'image' && m.image_url">
+                                                <div class="mb-2">
+                                                    <img :src="m.image_url" class="max-w-full h-32 rounded-lg object-cover border border-rc-border/30" />
+                                                    <p class="mt-1 text-[10px] text-gray-500 italic" x-text="m.content"></p>
+                                                </div>
+                                            </template>
+                                            <template x-if="m.content_type !== 'image' || !m.image_url">
+                                                <p x-text="m.content"></p>
+                                            </template>
+                                            <div class="flex items-center justify-between mt-1.5">
+                                                <span class="text-[8px] font-mono text-gray-600" x-text="m.role === 'user' ? 'Customer' : 'AI Bot'"></span>
+                                                <span class="text-[9px] font-mono text-gray-600" x-text="formatDate(m.created_at)"></span>
+                                            </div>
                                         </div>
                                     </div>
                                 </template>
-                            </div>
-                        </template>
-                        <template x-if="!selectedConvId">
-                            <div class="text-center py-8 text-gray-500"><i class="fa-solid fa-hand-pointer text-2xl mb-2 opacity-30"></i><p class="text-xs font-mono">Select a conversation</p></div>
-                        </template>
+                            </template>
+                            <template x-if="selectedConvId && convMessages.length === 0">
+                                <div class="text-center py-10 text-gray-500">
+                                    <i class="fa-solid fa-spinner text-2xl mb-2 animate-spin"></i>
+                                    <p class="text-xs font-mono">Loading messages...</p>
+                                </div>
+                            </template>
+                            <template x-if="!selectedConvId">
+                                <div class="text-center py-12 text-gray-500">
+                                    <i class="fa-solid fa-hand-pointer text-3xl mb-3 opacity-30"></i>
+                                    <p class="text-xs font-mono">Select a conversation to view messages</p>
+                                </div>
+                            </template>
+                        </div>
                     </div>
                 </div>
             </div>

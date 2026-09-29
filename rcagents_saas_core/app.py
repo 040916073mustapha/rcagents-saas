@@ -681,6 +681,235 @@ def create_app():
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    # ────────────────────────────────────────────────────────────────
+    # Agents Prompts API
+    # ────────────────────────────────────────────────────────────────
+
+    AGENTS_DEFINITIONS = [
+        {"type": "customer_support", "name": "Customer Support", "icon": "fa-solid fa-headset", "color": "bg-blue-500/10", "text_color": "text-blue-400", "description": "Customer service and inquiries"},
+        {"type": "shipping", "name": "Shipping Tracking", "icon": "fa-solid fa-truck-fast", "color": "bg-teal-500/10", "text_color": "text-teal-400", "description": "ZR Express delivery tracking"},
+        {"type": "sales", "name": "Sales Agent", "icon": "fa-solid fa-cart-shopping", "color": "bg-neon-purple/10", "text_color": "text-neon-purple", "description": "Product recommendations and sales"},
+        {"type": "campaign", "name": "Campaign Agent", "icon": "fa-solid fa-bullhorn", "color": "bg-neon-pink/10", "text_color": "text-neon-pink", "description": "Promotions and seasonal offers"},
+        {"type": "engagement", "name": "Engagement Agent", "icon": "fa-solid fa-heart", "color": "bg-emerald-500/10", "text_color": "text-emerald-400", "description": "Customer loyalty and follow-ups"},
+        {"type": "analytics", "name": "Analytics Agent", "icon": "fa-solid fa-chart-line", "color": "bg-amber-400/10", "text_color": "text-amber-400", "description": "Reports and KPIs"},
+        {"type": "inventory", "name": "Inventory Agent", "icon": "fa-solid fa-warehouse", "color": "bg-amber-400/10", "text_color": "text-amber-400", "description": "Stock and inventory management"},
+    ]
+
+    AGENT_DEFAULT_PROMPTS = {
+        "customer_support": "You are a helpful customer support agent for Royal Chaussures, a women's shoe and accessories store. You help customers with inquiries, returns, complaints, and general questions. Be polite, professional, and solution-oriented. Reply in Algerian Arabic (Darja) or simple Arabic. Use emojis.",
+        "shipping": "You are a shipping tracking agent for Royal Chaussures. You help customers track their orders via ZR Express, check delivery status, and provide estimated delivery times. You cover all 58 wilayas of Algeria. Reply in Algerian Arabic (Darja) or simple Arabic. Use emojis.",
+        "sales": "You are a passionate sales agent for Royal Chaussures, a women's shoe and accessories store. Your goal is to help customers find the perfect products, suggest complementary items, and close sales. Know the product catalog well. Sizes available: 36-41 EU. Reply in Algerian Arabic (Darja) or simple Arabic. Use emojis.",
+        "campaign": "You are a campaign specialist for Royal Chaussures. You create excitement around promotions, seasonal sales, flash deals, and new arrivals. You encourage customers to take advantage of limited-time offers. Reply in Algerian Arabic (Darja) or simple Arabic. Use emojis.",
+        "engagement": "You are a customer engagement agent for Royal Chaussures. You focus on building customer loyalty, sending follow-ups after purchases, requesting reviews, and making customers feel valued. You help with the loyalty program. Reply in Algerian Arabic (Darja) or simple Arabic. Use emojis.",
+        "analytics": "You are an analytics agent that provides business insights, reports, and KPIs for Royal Chaussures. You analyze sales data, customer behavior, and channel performance. Present data clearly with numbers and percentages. Reply in Algerian Arabic (Darja) or simple Arabic.",
+        "inventory": "You are an inventory management agent for Royal Chaussures. You track stock levels, low-stock alerts, and product availability across all variants and sizes. Help staff manage inventory efficiently. Reply in Algerian Arabic (Darja) or simple Arabic.",
+    }
+
+    @app.route("/api/agents/prompts", methods=["GET"])
+    def api_agents_prompts_list():
+        """Get all agents with their prompts for a store"""
+        store_id = request.args.get("store_id", "1")
+        try:
+            from .database.models import StorePrompt
+            from .database.models import get_global_session
+            db = get_global_session()
+            result = []
+            for agent_def in AGENTS_DEFINITIONS:
+                agent_type = agent_def["type"]
+                stored = db.query(StorePrompt).filter(
+                    StorePrompt.store_id == store_id,
+                    StorePrompt.agent_type == agent_type
+                ).first()
+                prompt_text = stored.prompt_text if stored else AGENT_DEFAULT_PROMPTS.get(agent_type, "")
+                is_default = stored.is_default if stored else True
+                result.append({
+                    **agent_def,
+                    "prompt": prompt_text,
+                    "is_default": is_default,
+                })
+            db.close()
+            return jsonify({"success": True, "agents": result})
+        except Exception as e:
+            logger.error(f"[AGENTS] List error: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route("/api/agents/prompts", methods=["POST"])
+    def api_agents_prompts_save():
+        """Save prompt for a specific agent type"""
+        try:
+            data = request.get_json(force=True)
+            store_id = data.get("store_id", "1")
+            agent_type = data.get("agent_type", "")
+            prompt_text = data.get("prompt", "")
+
+            if not agent_type:
+                return jsonify({"success": False, "error": "agent_type is required"}), 400
+
+            from .database.models import StorePrompt, get_global_session
+            db = get_global_session()
+            existing = db.query(StorePrompt).filter(
+                StorePrompt.store_id == store_id,
+                StorePrompt.agent_type == agent_type
+            ).first()
+
+            if existing:
+                existing.prompt_text = prompt_text
+                existing.is_default = False
+                existing.updated_at = datetime.now(timezone.utc)
+            else:
+                sp = StorePrompt(
+                    store_id=store_id,
+                    agent_type=agent_type,
+                    prompt_text=prompt_text,
+                    is_default=False
+                )
+                db.add(sp)
+
+            db.commit()
+            db.close()
+
+            logger.info(f"[AGENTS] Saved prompt for {agent_type} (store={store_id})")
+            return jsonify({"success": True, "agent_type": agent_type, "saved": True})
+        except Exception as e:
+            logger.error(f"[AGENTS] Save error: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route("/api/agents/prompts/<agent_type>", methods=["GET"])
+    def api_agents_prompts_get(agent_type):
+        """Get prompt for a specific agent type"""
+        store_id = request.args.get("store_id", "1")
+        try:
+            from .database.models import StorePrompt, get_global_session
+            db = get_global_session()
+            stored = db.query(StorePrompt).filter(
+                StorePrompt.store_id == store_id,
+                StorePrompt.agent_type == agent_type
+            ).first()
+            prompt_text = stored.prompt_text if stored else AGENT_DEFAULT_PROMPTS.get(agent_type, "")
+            is_default = stored.is_default if stored else True
+            db.close()
+            return jsonify({
+                "success": True,
+                "agent_type": agent_type,
+                "prompt": prompt_text,
+                "is_default": is_default,
+                "default_prompt": AGENT_DEFAULT_PROMPTS.get(agent_type, "")
+            })
+        except Exception as e:
+            logger.error(f"[AGENTS] Get error: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    # ────────────────────────────────────────────────────────────────
+    # Messages / Conversations API (Live Chat)
+    # ────────────────────────────────────────────────────────────────
+
+    @app.route("/api/messages", methods=["GET"])
+    def api_messages():
+        """Get all messages grouped by conversation (sender_id + platform)"""
+        store_id = request.args.get("store_id", "1")
+        limit = int(request.args.get("limit", 200))
+        platform = request.args.get("platform", "")
+        search = request.args.get("search", "")
+
+        try:
+            from .database.models import Message, Conversation, get_global_session
+            from sqlalchemy import func as _func
+
+            db = get_global_session()
+            # Get all conversations for this store
+            base = db.query(Conversation).filter(Conversation.store_id == store_id)
+            if platform:
+                base = base.filter(Conversation.channel == platform)
+            conversations = base.order_by(Conversation.updated_at.desc()).limit(limit).all()
+
+            result = []
+            for conv in conversations:
+                # Get last message for preview
+                last_msg = db.query(Message).filter(
+                    Message.conversation_id == conv.id
+                ).order_by(Message.created_at.desc()).first()
+
+                result.append({
+                    "id": conv.id,
+                    "store_id": conv.store_id,
+                    "channel": conv.channel,
+                    "platform_conversation_id": conv.platform_conversation_id,
+                    "customer_name": conv.customer_name or "",
+                    "customer_platform_id": conv.customer_platform_id or "",
+                    "last_user_message": conv.last_user_message or "",
+                    "last_ai_reply": conv.last_ai_reply or "",
+                    "message_count": conv.message_count or 0,
+                    "created_at": conv.created_at.isoformat() if conv.created_at else "",
+                    "updated_at": conv.updated_at.isoformat() if conv.updated_at else "",
+                    "sender_name": conv.customer_name or conv.customer_platform_id or "",
+                })
+
+            db.close()
+
+            # Filter by search
+            if search:
+                q = search.lower()
+                result = [r for r in result if q in r["customer_name"].lower() or q in r["customer_platform_id"].lower() or q in r["last_user_message"].lower()]
+
+            return jsonify({"success": True, "conversations": result, "total": len(result)})
+        except Exception as e:
+            logger.error(f"[MESSAGES] List error: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route("/api/conversations/<store_id>/<conv_id>/messages", methods=["GET"])
+    def api_conversation_messages(store_id, conv_id):
+        """Get all messages for a specific conversation"""
+        try:
+            from .database.models import Message, get_global_session
+            db = get_global_session()
+            messages = db.query(Message).filter(
+                Message.conversation_id == conv_id,
+                Message.store_id == store_id
+            ).order_by(Message.created_at.asc()).limit(100).all()
+
+            result = []
+            for m in messages:
+                result.append({
+                    "id": m.id,
+                    "conversation_id": m.conversation_id,
+                    "role": m.role,
+                    "content": m.content,
+                    "content_type": m.content_type,
+                    "image_url": m.image_url or "",
+                    "channel": m.channel,
+                    "sender_name": m.channel,  # channel as sender identifier
+                    "created_at": m.created_at.isoformat() if m.created_at else "",
+                })
+            db.close()
+            return jsonify({"success": True, "messages": result})
+        except Exception as e:
+            logger.error(f"[MESSAGES] Conversation messages error: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route("/api/profile", methods=["GET"])
+    def api_profile():
+        """Get Facebook user profile by PSID"""
+        psid = request.args.get("psid", "")
+        if not psid:
+            return jsonify({"success": False, "error": "psid required"}), 400
+        try:
+            import requests as _req2
+            token = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN", "")
+            if not token or not psid:
+                return jsonify({"success": False, "name": psid, "fallback": True})
+            resp = _req2.get(
+                f"https://graph.facebook.com/v21.0/{psid}",
+                params={"fields": "name,profile_pic", "access_token": token},
+                timeout=10
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return jsonify({"success": True, "name": data.get("name", psid), "profile_pic": data.get("profile_pic", "")})
+            return jsonify({"success": False, "name": psid, "fallback": True})
+        except Exception as e:
+            logger.error(f"[PROFILE] Error fetching {psid}: {e}")
+            return jsonify({"success": False, "name": psid, "fallback": True})
+
     return app
 
 

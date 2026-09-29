@@ -198,6 +198,23 @@ class AISettings(Base):
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
 
+# ─── Store Prompts (Per-Agent Prompts) ─────────────────────────
+
+class StorePrompt(Base):
+    __tablename__ = "store_prompts"
+
+    id = Column(String(36), primary_key=True, default=gen_uuid)
+    store_id = Column(String(36), ForeignKey("stores.id"), nullable=False, index=True)
+    agent_type = Column(String(50), nullable=False)  # sales|campaign|engagement|analytics|support|shipping|custom
+    prompt_text = Column(Text, default="")
+    is_default = Column(Boolean, default=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("store_id", "agent_type", name="uq_store_agent_prompt"),
+    )
+
+
 # ─── Subscription Invoices ────────────────────────────────────
 
 class Invoice(Base):

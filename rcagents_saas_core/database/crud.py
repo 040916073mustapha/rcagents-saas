@@ -7,7 +7,7 @@ import logging
 from sqlalchemy.orm import Session
 from .models import (
     User, Store, Channel, Conversation, Message,
-    AISettings, Invoice, get_global_session
+    AISettings, StorePrompt, Invoice, get_global_session
 )
 
 logger = logging.getLogger("saas-core.db.crud")
