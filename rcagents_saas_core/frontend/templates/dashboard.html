@@ -160,7 +160,7 @@
         this.loadingMessages = true;
         this.convMessages = [];
         try {
-            const res = await fetch(`/api/conversations/${this.storeId}/${convId}/messages`);
+            const res = await fetch(`/api/messages/conv/${this.storeId}/${convId}`);
             const data = await res.json();
             this.convMessages = data.messages || [];
             this.$nextTick(() => {

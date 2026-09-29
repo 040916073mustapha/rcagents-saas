@@ -858,7 +858,10 @@ def create_app():
             logger.error(f"[MESSAGES] List error: {e}")
             return jsonify({"success": False, "error": str(e)}), 500
 
-    @app.route("/api/conversations/<store_id>/<conv_id>/messages", methods=["GET"])
+    # ⚠️ Note: /api/conversations/ routes may be intercepted by conversations_bp Blueprint
+    # Using /api/messages/conv prefix instead to avoid Blueprint auth interception
+
+    @app.route("/api/messages/conv/<store_id>/<conv_id>", methods=["GET"])
     def api_conversation_messages(store_id, conv_id):
         """Get all messages for a specific conversation"""
         try:
