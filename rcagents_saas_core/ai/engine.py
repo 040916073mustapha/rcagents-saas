@@ -13,6 +13,10 @@ import requests as http_requests
 from ..config import Config
 from ..database.models import AISettings, Conversation, Message, Store, StorePrompt, get_session
 
+# ─── Chat History Limit ──────────────────────────────────────
+
+CHAT_HISTORY_LIMIT = 10
+
 logger = logging.getLogger(__name__)
 
 
@@ -159,8 +163,53 @@ class AIEngine:
             return build_catalog_context(self.ai_settings.product_catalog)
         return ""
 
-    def build_payload(self, user_message: str, image_url: str = None, agent_type: str = "customer_support") -> dict:
-        """Build the AI request payload"""
+    def _fetch_chat_history(self, sender_id: str, channel_type: str, limit: int = CHAT_HISTORY_LIMIT) -> list:
+        """Fetch last N messages from DB for this conversation as chat history.
+        Returns list of {"role": "user"|"assistant", "content": str} dicts."""
+        if not sender_id or not channel_type:
+            return []
+        try:
+            # Find the conversation
+            conv = self.session.query(Conversation).filter(
+                Conversation.store_id == self.store_id,
+                Conversation.channel == channel_type,
+                Conversation.customer_platform_id == sender_id
+            ).first()
+            if not conv:
+                return []
+
+            # Fetch last N messages (skip the most recent user message — it's the current one)
+            msgs = self.session.query(Message).filter(
+                Message.conversation_id == conv.id
+            ).order_by(Message.created_at.desc()).limit(limit + 2).all()
+
+            # Reverse to chronological order, skip first (current) message
+            msgs.reverse()
+            # Remove the last one if it's the current user message (already being sent separately)
+            if len(msgs) > 1:
+                msgs = msgs[:-1]
+
+            history = []
+            for m in msgs:
+                if m.role in ("user", "assistant"):
+                    content = m.content or ""
+                    # For image messages, add a note
+                    if m.content_type == "image" and not content.strip():
+                        content = "[صورة المنتج]"
+                    history.append({
+                        "role": m.role,
+                        "content": content
+                    })
+
+            logger.info(f"[AI] Loaded {len(history)} chat history messages for {channel_type}/{sender_id[:20]}")
+            return history
+        except Exception as e:
+            logger.warning(f"[AI] Failed to load chat history: {e}")
+            return []
+
+    def build_payload(self, user_message: str, image_url: str = None, agent_type: str = "customer_support",
+                      sender_id: str = None, channel_type: str = None) -> dict:
+        """Build the AI request payload with chat history"""
         system_prompt = self.get_system_prompt(agent_type=agent_type)
         catalog = self.get_catalog()
 
@@ -176,7 +225,17 @@ class AIEngine:
                 "content": f"معلومات المنتجات الحالية:\n{catalog}"
             })
 
-        # Build user message
+        # ─── Inject Chat History ───────────────────────────
+        # Fetch previous messages so the LLM knows it's an ongoing conversation
+        # and does NOT repeat the welcome greeting
+        chat_history = self._fetch_chat_history(sender_id, channel_type)
+        for h_msg in chat_history:
+            messages.append({
+                "role": h_msg["role"],
+                "content": h_msg["content"]
+            })
+
+        # ─── Current User Message ──────────────────────────
         user_content = []
         if user_message:
             user_content.append({"type": "text", "text": user_message})
@@ -189,6 +248,8 @@ class AIEngine:
 
         messages.append({"role": "user", "content": user_content})
 
+        logger.info(f"[AI] Payload: {len(messages)} messages total ({len(chat_history)} history + 1 current)")
+
         return {
             "model": self.ai_settings.ai_model if (self.ai_settings and self.ai_settings.ai_model) else Config.AI_MODEL,
             "messages": messages,
@@ -196,7 +257,8 @@ class AIEngine:
             "temperature": self.ai_settings.temperature if self.ai_settings else 0.7,
         }
 
-    def send_request(self, user_message: str, image_url: str = None, agent_type: str = "customer_support") -> str | None:
+    def send_request(self, user_message: str, image_url: str = None, agent_type: str = "customer_support",
+                     sender_id: str = None, channel_type: str = None) -> str | None:
         """Send request to AI API with fallback model support"""
         api_key = Config.AI_API_KEY
         if not api_key:
@@ -209,7 +271,7 @@ class AIEngine:
         }
 
         api_url = "https://api.deepinfra.com/v1/openai/chat/completions"
-        payload = self.build_payload(user_message, image_url, agent_type=agent_type)
+        payload = self.build_payload(user_message, image_url, agent_type=agent_type, sender_id=sender_id, channel_type=channel_type)
 
         models_to_try = [
             (payload["model"], "primary"),

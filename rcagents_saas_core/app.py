@@ -327,7 +327,9 @@ def create_app():
         try:
             # Use 'customer_support' as the default agent type for webhook replies
             # The prompt is now fetched from store_prompts table (set via Dashboard AI Agents Editor)
-            ai_reply = ai.send_request(user_text, image_url, agent_type="customer_support")
+            # Pass sender_id + channel_type so the engine fetches chat history from DB
+            ai_reply = ai.send_request(user_text, image_url, agent_type="customer_support",
+                                       sender_id=sender_id, channel_type=channel_type)
         except Exception as e:
             logger.error(f"[AI] Engine error for store {store_id}: {e}")
         finally:
