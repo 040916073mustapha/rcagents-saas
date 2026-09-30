@@ -810,9 +810,9 @@ x-init="init()">
                             <div class="p-6 overflow-y-auto" style="max-height: calc(85vh - 140px);">
                                 <div class="mb-4">
                                     <label class="text-xs font-mono text-gray-400 block mb-2">System Prompt (defines AI behavior for this agent)</label>
-                                    <textarea x-model="editingPrompt" class="w-full h-64 bg-rc-bg border border-rc-border/50 rounded-xl p-4 text-xs text-gray-200 font-mono leading-relaxed focus:outline-none focus:border-neon-purple/50 transition-colors resize-none" placeholder="Enter system prompt for this agent..."></textarea>
+                                    <textarea x-model="editingPrompt" maxlength="20000" class="w-full h-64 bg-rc-bg border border-rc-border/50 rounded-xl p-4 text-xs text-gray-200 font-mono leading-relaxed focus:outline-none focus:border-neon-purple/50 transition-colors resize-none" placeholder="Enter system prompt for this agent..."></textarea>
                                     <div class="flex justify-between items-center mt-2">
-                                        <span class="text-[10px] font-mono" :class="editingPrompt.length > 2000 ? 'text-rose-400' : 'text-gray-500'" x-text="editingPrompt.length + ' characters'"></span>
+                                        <span class="text-[10px] font-mono" :class="editingPrompt.length > 10000 ? 'text-rose-400' : 'text-gray-500'" x-text="editingPrompt.length + ' / 20000 characters'"></span>
                                         <button @click="editingPrompt = ''" class="text-[10px] font-mono text-gray-500 hover:text-gray-300 transition-colors">
                                             <i class="fa-solid fa-rotate-left"></i> Reset to default
                                         </button>

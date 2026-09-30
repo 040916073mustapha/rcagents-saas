@@ -11,7 +11,7 @@ import time
 import requests as http_requests
 
 from ..config import Config
-from ..database.models import AISettings, Conversation, Message, Store, get_session
+from ..database.models import AISettings, Conversation, Message, Store, StorePrompt, get_session
 
 logger = logging.getLogger(__name__)
 
@@ -125,11 +125,31 @@ class AIEngine:
             store_id=self.store_id
         ).first()
 
-    def get_system_prompt(self) -> str:
-        """Get the effective system prompt for this store"""
+    def get_system_prompt(self, agent_type: str = "customer_support") -> str:
+        """Get the effective system prompt for this store.
+        Priority:
+        1. store_prompts table (per-agent custom prompts set via Dashboard)
+        2. ai_settings.system_prompt (legacy)
+        3. Default prompt by language
+        """
+        # Priority 1: Check store_prompts table for the requested agent type
+        try:
+            sp = self.session.query(StorePrompt).filter(
+                StorePrompt.store_id == self.store_id,
+                StorePrompt.agent_type == agent_type
+            ).first()
+            if sp and sp.prompt_text and sp.prompt_text.strip():
+                logger.info(f"[AI] Using store_prompts.{agent_type} for store {self.store_id}")
+                return sp.prompt_text
+        except Exception as e:
+            logger.warning(f"[AI] Failed to read store_prompts for {agent_type}: {e}")
+
+        # Priority 2: Legacy ai_settings table
         if self.ai_settings and self.ai_settings.system_prompt:
+            logger.info(f"[AI] Using ai_settings.system_prompt for store {self.store_id}")
             return self.ai_settings.system_prompt
 
+        # Priority 3: Default
         lang = self.ai_settings.language if self.ai_settings else "ar"
         return get_default_prompt(lang)
 
@@ -139,9 +159,9 @@ class AIEngine:
             return build_catalog_context(self.ai_settings.product_catalog)
         return ""
 
-    def build_payload(self, user_message: str, image_url: str = None) -> dict:
+    def build_payload(self, user_message: str, image_url: str = None, agent_type: str = "customer_support") -> dict:
         """Build the AI request payload"""
-        system_prompt = self.get_system_prompt()
+        system_prompt = self.get_system_prompt(agent_type=agent_type)
         catalog = self.get_catalog()
 
         # Build messages
@@ -176,7 +196,7 @@ class AIEngine:
             "temperature": self.ai_settings.temperature if self.ai_settings else 0.7,
         }
 
-    def send_request(self, user_message: str, image_url: str = None) -> str | None:
+    def send_request(self, user_message: str, image_url: str = None, agent_type: str = "customer_support") -> str | None:
         """Send request to AI API with fallback model support"""
         api_key = Config.AI_API_KEY
         if not api_key:
@@ -189,7 +209,7 @@ class AIEngine:
         }
 
         api_url = "https://api.deepinfra.com/v1/openai/chat/completions"
-        payload = self.build_payload(user_message, image_url)
+        payload = self.build_payload(user_message, image_url, agent_type=agent_type)
 
         models_to_try = [
             (payload["model"], "primary"),
