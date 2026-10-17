@@ -373,6 +373,96 @@
                 </div>
             </div>
 
+            <!-- WhatsApp Tab -->
+            <div x-show="activeTab === 'whatsapp'">
+                <div class="header"><h2>💬 إعدادات واتساب</h2></div>
+                <div x-data="{ waLoading: true, waStatus: {}, waError: null }" x-init="
+                    setTimeout(() => {
+                        fetch('/api/whatsapp/status?store_id=1')
+                            .then(r => r.json())
+                            .then(d => { if(d.success) { waStatus = d; } else { waError = 'Failed to load'; } })
+                            .catch(e => { waError = e.message; })
+                            .finally(() => { waLoading = false; });
+                    }, 50);
+                ">
+                    <!-- Loading -->
+                    <div x-show="waLoading" style="text-align:center; padding:40px;">
+                        <div style="display:inline-flex; align-items:center; gap:10px; color:#666;">
+                            <span style="width:20px;height:20px;border:2px solid #25d366;border-top-color:transparent;border-radius:50%;animation:spin 0.8s infinite;"></span>
+                            جاري تحميل معلومات واتساب...
+                        </div>
+                    </div>
+
+                    <!-- Error -->
+                    <div x-show="!waLoading && waError" style="background:rgba(255,50,50,0.1); border:1px solid rgba(255,50,50,0.3); border-radius:12px; padding:16px; margin-bottom:16px;">
+                        <p style="color:#ff6b6b; font-size:13px;" x-text="waError"></p>
+                    </div>
+
+                    <div x-show="!waLoading && !waError" style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+                        <!-- Status Card -->
+                        <div class="stat-card">
+                            <div class="label">حالة واتساب</div>
+                            <div style="margin-top:8px;">
+                                <span style="display:inline-flex; align-items:center; gap:6px; padding:6px 14px; border-radius:20px; font-size:13px;" :style="waStatus.whatsapp_configured ? 'background:rgba(37,211,102,0.15); color:#25d366;' : 'background:rgba(255,193,7,0.15); color:#ffc107;'">
+                                    <span x-text="waStatus.whatsapp_configured ? '✅ متصل' : '❌ غير متصل'"></span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="stat-card">
+                            <div class="label">رقم الهاتف (Phone ID)</div>
+                            <p style="margin-top:8px; font-family:monospace; font-size:14px; color:#e0e0e0;" x-text="waStatus.phone_number_id_full || '—'"></p>
+                        </div>
+
+                        <div class="stat-card">
+                            <div class="label">Meta Ping</div>
+                            <div style="margin-top:8px;">
+                                <span style="display:inline-flex; align-items:center; gap:6px; padding:6px 14px; border-radius:20px; font-size:13px;" :style="waStatus.meta_ping_ok ? 'background:rgba(37,211,102,0.15); color:#25d366;' : 'background:rgba(255,50,50,0.15); color:#ff6b6b;'">
+                                    <span x-text="waStatus.meta_ping_ok ? '✅ يعمل' : '❌ عطل'"></span>
+                                </span>
+                            </div>
+                            <p x-show="waStatus.meta_ping_error" style="margin-top:6px; font-size:11px; color:#ff6b6b;" x-text="waStatus.meta_ping_error"></p>
+                        </div>
+
+                        <div class="stat-card">
+                            <div class="label">Business Verified</div>
+                            <div style="margin-top:8px;">
+                                <span style="display:inline-flex; align-items:center; gap:6px; padding:6px 14px; border-radius:20px; font-size:13px;" :style="waStatus.business_verified ? 'background:rgba(37,211,102,0.15); color:#25d366;' : 'background:rgba(255,193,7,0.15); color:#ffc107;'">
+                                    <span x-text="waStatus.business_verified ? '✅ نعم' : '❌ لا'"></span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Webhook Config -->
+                        <div class="stat-card" style="grid-column:1/-1;">
+                            <div class="label">🔗 تهيئة Webhook</div>
+                            <div style="margin-top:8px; display:grid; gap:8px;">
+                                <div style="display:flex; align-items:center; gap:8px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:8px 12px;">
+                                    <span style="color:#888; font-size:11px; white-space:nowrap;">Callback URL:</span>
+                                    <code style="flex:1; color:#25d366; font-size:12px; direction:ltr; text-align:left;" x-text="waStatus.webhook_url || '—'"></code>
+                                </div>
+                                <div style="display:flex; align-items:center; gap:8px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:8px 12px;">
+                                    <span style="color:#888; font-size:11px; white-space:nowrap;">Verify Token:</span>
+                                    <code style="flex:1; color:#ffc107; font-size:12px; direction:ltr; text-align:left;" x-text="waStatus.verify_token || '—'"></code>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Embedded Signup -->
+                        <div class="stat-card" style="grid-column:1/-1;">
+                            <div class="label">🔑 WABA Embedded Signup</div>
+                            <p style="color:#888; font-size:12px; margin-top:4px;">اربط رقم واتساب تجاري جديد مباشرة</p>
+                            <a x-show="waStatus.waba_embedded_signup_url" :href="waStatus.waba_embedded_signup_url" target="_blank" style="display:inline-flex; align-items:center; gap:8px; margin-top:12px; padding:10px 24px; background:rgba(37,211,102,0.15); color:#25d366; border-radius:10px; text-decoration:none; font-size:13px; font-weight:500;">
+                                🚀 فتح Embedded Signup
+                            </a>
+                            <p x-show="!waStatus.waba_embedded_signup_url" style="margin-top:12px; font-size:12px; color:#ffc107;">⚠️ قم بتعيين META_APP_ID في المتغيرات البيئية</p>
+                        </div>
+                    </div>
+                </div>
+                <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+            </div>
+            <!-- ====== END WHATSAPP TAB ====== -->
+
             <!-- Settings Tab -->
             <div x-show="activeTab === 'settings'">
                 <div class="header"><h2>⚙️ إعدادات AI</h2></div>
@@ -417,6 +507,7 @@
                 navItems: [
                     { id: 'dashboard', icon: '📊', label: 'لوحة التحكم' },
                     { id: 'stores',    icon: '🛍️', label: 'المتاجر' },
+                    { id: 'whatsapp',  icon: '💬', label: 'واتساب' },
                     { id: 'channels',  icon: '📡', label: 'القنوات' },
                     { id: 'settings',  icon: '⚙️', label: 'إعدادات AI' },
                 ],
