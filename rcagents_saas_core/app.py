@@ -207,6 +207,107 @@ def create_app():
     def dashboard_marketing():
         return send_from_directory(app.static_folder, "dashboard.html")
 
+    @app.route("/dashboard/whatsapp")
+    def dashboard_whatsapp():
+        """WhatsApp Cloud API Setup page with Embedded Signup"""
+        return send_from_directory(app.static_folder, "dashboard.html")
+
+    # ─── WhatsApp Business Config ──────────────────────────────────
+    _WABA_ID = os.getenv("WABA_ID", "")
+    _WA_BUSINESS_ID = os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID", "")
+    _META_APP_ID = os.getenv("META_APP_ID", "")
+    _META_CLIENT_TOKEN = os.getenv("META_CLIENT_TOKEN", "")
+
+    @app.route("/api/whatsapp/status", methods=["GET"])
+    def api_whatsapp_status():
+        """Get WhatsApp Cloud API configuration status for a store"""
+        store_id = request.args.get("store_id", "1")
+        status = {
+            "whatsapp_configured": bool(_WA_TOKEN and _WA_PHONE_ID),
+            "phone_number_id": _WA_PHONE_ID[:8] + "..." if _WA_PHONE_ID else "",
+            "waba_id": _WABA_ID[:20] + "..." if _WABA_ID else "",
+            "business_account_id": _WA_BUSINESS_ID[:20] + "..." if _WA_BUSINESS_ID else "",
+            "business_verified": bool(_WA_BUSINESS_ID),
+            "webhook_url": f"{request.host_url}whatsapp/webhook",
+            "verify_token": os.getenv("FB_VERIFY_TOKEN", "ROYAL-ROYAL-CH2026"),
+            "embedded_signup_url": f"https://business.facebook.com/wa/manage/phone-numbers/?business_id={_WA_BUSINESS_ID}" if _WA_BUSINESS_ID else "",
+            "waba_embedded_signup_url": f"https://business.facebook.com/wa/embedded-signup/entry?app_id={_META_APP_ID}&redirect_uri={request.host_url}dashboard/whatsapp" if _META_APP_ID else "",
+            "meta_app_id": _META_APP_ID[:10] + "..." if _META_APP_ID else "",
+            "callback_url": f"{request.host_url}whatsapp/webhook",
+        }
+        return jsonify({"success": True, **status})
+
+    @app.route("/api/whatsapp/send-template", methods=["POST"])
+    def api_whatsapp_send_template():
+        """Send a WhatsApp Template Message to a customer"""
+        try:
+            data = request.get_json(force=True)
+            to_number = data.get("to", "")
+            template_name = data.get("template", "")
+            language = data.get("language", "ar")
+            params = data.get("parameters", [])
+
+            if not to_number or not template_name:
+                return jsonify({"success": False, "error": "to and template are required"}), 400
+            if not _WA_TOKEN or not _WA_PHONE_ID:
+                return jsonify({"success": False, "error": "WhatsApp not configured"}), 400
+
+            body = {
+                "messaging_product": "whatsapp",
+                "to": to_number,
+                "type": "template",
+                "template": {
+                    "name": template_name,
+                    "language": {"code": language},
+                }
+            }
+            if params:
+                body["template"]["components"] = [{
+                    "type": "body",
+                    "parameters": [{"type": "text", "text": p} for p in params]
+                }]
+
+            resp = _http.post(
+                f"{_META_API}/{_WA_PHONE_ID}/messages",
+                headers={"Authorization": f"Bearer {_WA_TOKEN}"},
+                json=body,
+                timeout=15
+            )
+            logger.info(f"[WA TEMPLATE] Sent '{template_name}' to {to_number}: {resp.status_code}")
+            return jsonify({"success": resp.status_code == 200, "status_code": resp.status_code, "response": resp.json() if resp.ok else resp.text[:200]})
+        except Exception as e:
+            logger.error(f"[WA TEMPLATE] Error: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route("/api/whatsapp/send-message", methods=["POST"])
+    def api_whatsapp_send_message():
+        """Manually send a WhatsApp message (Session) from Dashboard"""
+        try:
+            data = request.get_json(force=True)
+            to_number = data.get("to", "")
+            text = data.get("text", "")
+            if not to_number or not text:
+                return jsonify({"success": False, "error": "to and text are required"}), 400
+            if not _WA_TOKEN or not _WA_PHONE_ID:
+                return jsonify({"success": False, "error": "WhatsApp not configured"}), 400
+
+            resp = _http.post(
+                f"{_META_API}/{_WA_PHONE_ID}/messages",
+                headers={"Authorization": f"Bearer {_WA_TOKEN}"},
+                json={
+                    "messaging_product": "whatsapp",
+                    "to": to_number,
+                    "type": "text",
+                    "text": {"body": text[:4096]}
+                },
+                timeout=15
+            )
+            logger.info(f"[WA SEND] To {to_number}: {resp.status_code}")
+            return jsonify({"success": resp.status_code == 200, "status_code": resp.status_code, "response": resp.json() if resp.ok else resp.text[:200]})
+        except Exception as e:
+            logger.error(f"[WA SEND] Error: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
+
     # ─── Webhook Endpoint (Messenger & Instagram) with HMAC-SHA256 ──
 
     META_APP_SECRET = os.getenv("META_APP_SECRET", "")
@@ -399,6 +500,59 @@ def create_app():
         except Exception as e:
             logger.error(f"[IG] Send error: {e}")
 
+    def _send_wa_message(to_number, text, phone_id=None):
+        """WhatsApp: Send text message via Cloud API"""
+        pid = phone_id or _WA_PHONE_ID
+        if not _WA_TOKEN or not pid:
+            logger.error(f"[WA] Missing token or phone ID — cannot send")
+            return None
+        try:
+            resp = _http.post(
+                f"{_META_API}/{pid}/messages",
+                headers={"Authorization": f"Bearer {_WA_TOKEN}"},
+                json={"messaging_product": "whatsapp", "to": to_number, "text": {"body": text[:4096]}},
+                timeout=15
+            )
+            logger.info(f"[WA SEND] To {to_number[:20]}: {resp.status_code}")
+            if resp.status_code != 200:
+                logger.error(f"[WA] API error: {resp.status_code} {resp.text[:300]}")
+            return resp
+        except Exception as e:
+            logger.error(f"[WA] Send error: {e}")
+            return None
+
+    def _send_wa_template(to_number, template_name, language="ar", params=None):
+        """WhatsApp: Send a template message (out-of-session / 24h window)"""
+        if not _WA_TOKEN or not _WA_PHONE_ID:
+            logger.error(f"[WA TEMPLATE] Missing token or phone ID")
+            return None
+        body = {
+            "messaging_product": "whatsapp",
+            "to": to_number,
+            "type": "template",
+            "template": {
+                "name": template_name,
+                "language": {"code": language},
+            }
+        }
+        if params:
+            body["template"]["components"] = [{
+                "type": "body",
+                "parameters": [{"type": "text", "text": p} for p in params]
+            }]
+        try:
+            resp = _http.post(
+                f"{_META_API}/{_WA_PHONE_ID}/messages",
+                headers={"Authorization": f"Bearer {_WA_TOKEN}"},
+                json=body,
+                timeout=15
+            )
+            logger.info(f"[WA TEMPLATE] Sent '{template_name}' to {to_number[:20]}: {resp.status_code}")
+            return resp
+        except Exception as e:
+            logger.error(f"[WA TEMPLATE] Error: {e}")
+            return None
+
     def _send_wa_reply_ai(sender_id, text, image_url, store_id):
         """WhatsApp: AI reply + send via Graph API with response logging"""
         reply = _call_ai_and_save(store_id, sender_id, text, image_url, "whatsapp", "WA")
@@ -408,19 +562,7 @@ def create_app():
         if not _WA_TOKEN or not _WA_PHONE_ID:
             logger.error(f"[WA] Missing token or phone ID — cannot send")
             return
-        try:
-            logger.info(f"[WA] Sending to {sender_id[:20]}...")
-            resp = _http.post(
-                f"{_META_API}/{_WA_PHONE_ID}/messages",
-                headers={"Authorization": f"Bearer {_WA_TOKEN}"},
-                json={"messaging_product": "whatsapp", "to": sender_id, "text": {"body": reply[:4096]}},
-                timeout=15
-            )
-            logger.info(f"[WA] Response {resp.status_code}: {resp.text[:200]}")
-            if resp.status_code != 200:
-                logger.error(f"[WA] Meta API error: {resp.status_code} {resp.text[:300]}")
-        except Exception as e:
-            logger.error(f"[WA] Send error: {e}")
+        _send_wa_message(sender_id, reply)
 
     # ─── Multi-Tenant Webhook Processors ─────────────────────
 
@@ -488,6 +630,23 @@ def create_app():
                     except Exception as msg_e:
                         logger.error(f"[MT] Error processing message: {msg_e}")
 
+    def _get_wa_media_url(media_id):
+        """WhatsApp: Resolve media ID to download URL via Graph API"""
+        if not media_id or not _WA_TOKEN:
+            return ""
+        try:
+            resp = _http.get(
+                f"{_META_API}/{media_id}",
+                headers={"Authorization": f"Bearer {_WA_TOKEN}"},
+                timeout=10
+            )
+            if resp.status_code == 200:
+                return resp.json().get("url", "")
+            logger.warning(f"[WA MEDIA] Failed to get URL for {media_id[:20]}: {resp.status_code}")
+        except Exception as e:
+            logger.warning(f"[WA MEDIA] Error: {e}")
+        return ""
+
     def _process_whatsapp_multi(entries):
         """Multi-tenant: process WhatsApp messages with store_id lookup"""
         logger.info(f"[MT] process_whatsapp: entries={len(entries)}")
@@ -513,18 +672,41 @@ def create_app():
                             logger.info(f"[DEDUP] WA skipping duplicate wamid={wamid[:20]}...")
                             continue
                         __processed_mids.add(wamid)
-                    # ─── Skip WA echo from bot own number ─────────
-                    if msg.get("statuses") or msg.get("errors") or msg.get("context", {}).get("from", "") == _WA_PHONE_ID or msg.get("from", "") == _WA_PHONE_ID:
+                    # ─── Skip WA status/errors/echo ────────────────
+                    if msg.get("statuses") or msg.get("errors"):
+                        continue
+                    if msg.get("context", {}).get("from", "") == (_WA_PHONE_ID or "") or msg.get("from", "") == (_WA_PHONE_ID or ""):
                         continue
                     sender = msg.get("from", "")
                     text = (msg.get("text") or {}).get("body", "") or ""
-                    img = msg.get("image") or {}
-                    image_url = img.get("id") or img.get("link") or ""
+                    # ─── Handle media messages (image, document, audio) ──
+                    image_url = ""
+                    msg_type = msg.get("type", "")
+                    if msg_type == "image":
+                        img = msg.get("image") or {}
+                        media_id = img.get("id")
+                        if media_id:
+                            image_url = _get_wa_media_url(media_id)
+                        if not image_url:
+                            image_url = img.get("link") or ""
+                    elif msg_type == "document":
+                        doc = msg.get("document") or {}
+                        media_id = doc.get("id")
+                        if media_id:
+                            image_url = _get_wa_media_url(media_id)
+                    elif msg_type == "interactive":
+                        interactive = msg.get("interactive", {})
+                        # Button reply
+                        if interactive.get("type") == "button_reply":
+                            text = interactive.get("button_reply", {}).get("title", "") or text
+                        # List reply
+                        elif interactive.get("type") == "list_reply":
+                            text = interactive.get("list_reply", {}).get("title", "") or text
                     if sender and (text or image_url):
                         try:
                             conv = get_or_create_conversation(store_id, "whatsapp", sender, customer_platform_id=sender)
                             save_message(conv.id, store_id, "user", text or "[Image]", "whatsapp", "image" if image_url else "text", image_url)
-                            logger.info(f"[MT] WA msg from {sender}: text='{text[:60]}' store={store_id}")
+                            logger.info(f"[MT] WA msg from {sender}: text='{text[:60]}' image={bool(image_url)} store={store_id}")
                             _th.Thread(target=_send_wa_reply_ai, args=(sender, text, image_url, store_id), daemon=True).start()
                         except Exception as msg_e:
                             logger.error(f"[MT] WA error: {msg_e}")
@@ -759,7 +941,7 @@ def create_app():
             if existing:
                 existing.prompt_text = prompt_text
                 existing.is_default = False
-                existing.updated_at = datetime.now(timezone.utc)
+                existing.updated_at = __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
             else:
                 sp = StorePrompt(
                     store_id=store_id,
