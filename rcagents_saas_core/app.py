@@ -222,20 +222,48 @@ def create_app():
     def api_whatsapp_status():
         """Get WhatsApp Cloud API configuration status for a store"""
         store_id = request.args.get("store_id", "1")
-        status = {
-            "whatsapp_configured": bool(_WA_TOKEN and _WA_PHONE_ID),
-            "phone_number_id": _WA_PHONE_ID[:8] + "..." if _WA_PHONE_ID else "",
-            "waba_id": _WABA_ID[:20] + "..." if _WABA_ID else "",
-            "business_account_id": _WA_BUSINESS_ID[:20] + "..." if _WA_BUSINESS_ID else "",
-            "business_verified": bool(_WA_BUSINESS_ID),
-            "webhook_url": f"{request.host_url}whatsapp/webhook",
-            "verify_token": os.getenv("FB_VERIFY_TOKEN", "ROYAL-ROYAL-CH2026"),
-            "embedded_signup_url": f"https://business.facebook.com/wa/manage/phone-numbers/?business_id={_WA_BUSINESS_ID}" if _WA_BUSINESS_ID else "",
-            "waba_embedded_signup_url": f"https://business.facebook.com/wa/embedded-signup/entry?app_id={_META_APP_ID}&redirect_uri={request.host_url}dashboard/whatsapp" if _META_APP_ID else "",
-            "meta_app_id": _META_APP_ID[:10] + "..." if _META_APP_ID else "",
-            "callback_url": f"{request.host_url}whatsapp/webhook",
-        }
-        return jsonify({"success": True, **status})
+        logger.info(f"[WA STATUS] Request for store_id={store_id}")
+        try:
+            wa_configured = bool(_WA_TOKEN and _WA_PHONE_ID)
+            # Try a test ping to Meta to verify token is valid
+            meta_ping_ok = False
+            meta_ping_error = ""
+            if wa_configured:
+                try:
+                    ping_resp = _http.get(
+                        f"{_META_API}/{_WA_PHONE_ID}",
+                        headers={"Authorization": f"Bearer {_WA_TOKEN}"},
+                        timeout=5
+                    )
+                    meta_ping_ok = ping_resp.status_code == 200
+                    if not meta_ping_ok:
+                        meta_ping_error = f"HTTP {ping_resp.status_code}: {ping_resp.text[:100]}"
+                except Exception as pe:
+                    meta_ping_error = str(pe)
+
+            status = {
+                "whatsapp_configured": wa_configured,
+                "phone_number_id": _WA_PHONE_ID[:8] + "..." if _WA_PHONE_ID else "",
+                "phone_number_id_full": _WA_PHONE_ID or "",
+                "waba_id": _WABA_ID[:20] + "..." if _WABA_ID else "",
+                "business_account_id": _WA_BUSINESS_ID[:20] + "..." if _WA_BUSINESS_ID else "",
+                "business_verified": bool(_WA_BUSINESS_ID),
+                "token_exists": bool(_WA_TOKEN),
+                "token_prefix": _WA_TOKEN[:15] + "..." if _WA_TOKEN else "",
+                "meta_ping_ok": meta_ping_ok,
+                "meta_ping_error": meta_ping_error,
+                "webhook_url": f"{request.host_url}whatsapp/webhook",
+                "verify_token": os.getenv("FB_VERIFY_TOKEN", "ROYAL-ROYAL-CH2026"),
+                "embedded_signup_url": f"https://business.facebook.com/wa/manage/phone-numbers/?business_id={_WA_BUSINESS_ID}" if _WA_BUSINESS_ID else "",
+                "waba_embedded_signup_url": f"https://business.facebook.com/wa/embedded-signup/entry?app_id={_META_APP_ID}&redirect_uri={request.host_url}dashboard/whatsapp" if _META_APP_ID else "",
+                "meta_app_id": _META_APP_ID[:10] + "..." if _META_APP_ID else "",
+                "callback_url": f"{request.host_url}whatsapp/webhook",
+            }
+            logger.info(f"[WA STATUS] Sent: configured={wa_configured} ping={meta_ping_ok}")
+            return jsonify({"success": True, **status})
+        except Exception as e:
+            logger.error(f"[WA STATUS] Error: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
 
     @app.route("/api/whatsapp/send-template", methods=["POST"])
     def api_whatsapp_send_template():
@@ -381,14 +409,23 @@ def create_app():
             mode = request.args.get("hub.mode")
             token = request.args.get("hub.verify_token")
             challenge = request.args.get("hub.challenge")
+            logger.info(f"[WA WEBHOOK] GET: mode={mode} token={token}")
             if mode == "subscribe" and token == FB_VERIFY_TOKEN:
+                logger.info(f"[WA WEBHOOK] Verification OK! challenge={challenge}")
                 return Response(challenge, status=200, content_type="text/plain")
+            logger.warning(f"[WA WEBHOOK] Verify failed: mode={mode}")
             return "Verification failed", 403
 
         data = request.get_json(silent=True)
         if data:
-            logger.info(f"WhatsApp webhook received")
-            _process_whatsapp_multi(data.get("entry", []))
+            logger.info(f"[WA WEBHOOK] POST received — entries={len(data.get('entry',[]))}")
+            try:
+                _process_whatsapp_multi(data.get("entry", []))
+                logger.info(f"[WA WEBHOOK] Processing complete")
+            except Exception as we:
+                logger.error(f"[WA WEBHOOK] Error: {we}", exc_info=True)
+        else:
+            logger.warning(f"[WA WEBHOOK] POST but no JSON data")
         return jsonify({"status": "ok"})
 
     # ─── AI Engine + Platform Senders (standalone, no server.py) ──

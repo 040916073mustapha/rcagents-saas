@@ -1226,6 +1226,7 @@ x-init="init()">
 
 <!-- ====== WHATSAPP SETUP ====== -->
 <div x-show="view === 'whatsapp'" x-data="{
+    storeId: '1',
     waLoading: true,
     waStatus: {},
     sendTo: '',
@@ -1240,7 +1241,8 @@ x-init="init()">
         this.waLoading = true;
         this.waError = null;
         try {
-            const res = await fetch('/api/whatsapp/status?store_id=' + this.storeId);
+            const sid = this.storeId || '1';
+            const res = await fetch('/api/whatsapp/status?store_id=' + sid);
             const data = await res.json();
             if (data.success) {
                 this.waStatus = data;
@@ -1288,7 +1290,7 @@ x-init="init()">
     copyToClipboard(text) {
         navigator.clipboard?.writeText(text || '');
     }
-}" x-init="loadStatus()">
+}" x-init="setTimeout(() => loadStatus(), 50)">
     <div class="flex items-center justify-between mb-6">
         <div>
             <h2 class="text-lg font-bold text-white flex items-center gap-2"><i class="fab fa-whatsapp text-emerald-400"></i> WhatsApp Cloud API Setup</h2>
