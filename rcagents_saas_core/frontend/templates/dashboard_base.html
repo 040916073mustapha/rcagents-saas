@@ -267,6 +267,10 @@ window.MOCK_CLIENTS = [
 
     </div>
     <script>
+        // Log Alpine lifecycle events for debugging
+        document.addEventListener('alpine:init', () => console.log('[Alpine] Dashboard initialized'));
+        document.addEventListener('alpine:error', (e) => console.error('[Alpine Error]', e.detail));
+
     function app() {
         return {
             activeNav: 'overview',

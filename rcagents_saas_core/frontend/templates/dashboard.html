@@ -50,14 +50,14 @@
                 fetch(`/api/stats/ai-brain?store_id=${sid}`).then(r => r.json()).catch(() => ({configured: false}))
             ]);
 
-            this.stats = statsRes;
-            this.ordersList = (ordersRes.orders && ordersRes.orders.length > 0) ? ordersRes.orders : (window.MOCK_ORDERS || []);
-            this.products = (productsRes.products && productsRes.products.length > 0) ? productsRes.products : (window.MOCK_PRODUCTS || []);
-            this.clients = (clientsRes.clients && clientsRes.clients.length > 0) ? clientsRes.clients : (window.MOCK_CLIENTS || []);
-            this.salesByChannel = salesRes;
-            this.aiBrain = brainRes;
+            this.stats = statsRes || {};
+            this.ordersList = ((ordersRes?.orders && ordersRes.orders.length > 0) ? ordersRes.orders : (window.MOCK_ORDERS || [])).map(o => ({...o, customer: o?.customer || null, status: o?.status || null, total: o?.total || 0, id: o?.id}));
+            this.products = ((productsRes?.products && productsRes.products.length > 0) ? productsRes.products : (window.MOCK_PRODUCTS || [])).map(p => ({...p, title: p?.title || 'Product', id: p?.id}));
+            this.clients = ((clientsRes?.clients && clientsRes.clients.length > 0) ? clientsRes.clients : (window.MOCK_CLIENTS || [])).map(c => ({...c, name: c?.name || null, phone: c?.phone || null, id: c?.id}));
+            this.salesByChannel = salesRes || {channels: []};
+            this.aiBrain = brainRes || {configured: false};
         } catch (e) {
-            console.error('Dashboard init error, using mock:', e);
+            console.error('[Alpine] Dashboard init error, using mock:', e);
             this.ordersList = window.MOCK_ORDERS || [];
             this.products = window.MOCK_PRODUCTS || [];
             this.clients = window.MOCK_CLIENTS || [];
@@ -148,9 +148,18 @@
             if (this.chatPlatform) params.set('platform', this.chatPlatform);
             const res = await fetch(`/api/messages?${params}`);
             const data = await res.json();
-            this.conversations = data.conversations || [];
+            this.conversations = (data.conversations || []).map(c => ({
+                ...c,
+                customer_name: c?.customer_name || null,
+                customer_platform_id: c?.customer_platform_id || null,
+                channel: c?.channel || '—',
+                last_user_message: c?.last_user_message || null,
+                last_ai_reply: c?.last_ai_reply || null,
+                updated_at: c?.updated_at || null,
+                message_count: c?.message_count || 0
+            }));
         } catch (e) {
-            console.error('Load conversations error:', e);
+            console.error('[Alpine] loadConversations error:', e);
             this.conversations = [];
         }
     },
@@ -876,25 +885,25 @@ x-init="init()">
                             <template x-for="c in conversations.filter(x => {
                                 if (!chatSearch) return true;
                                 const q = chatSearch.toLowerCase();
-                                return (x.customer_name||'').toLowerCase().includes(q) ||
-                                       (x.customer_platform_id||'').toLowerCase().includes(q) ||
-                                       (x.last_user_message||'').toLowerCase().includes(q);
-                            })" :key="c.id">
-                                <div class="p-4 hover:bg-rc-card-hover/30 cursor-pointer transition-colors" :class="selectedConvId === c.id ? 'bg-rc-card-hover/40 border-l-2 border-neon-purple' : ''" @click="loadConversationMessages(c.id)">
+                                return (x?.customer_name||'').toLowerCase().includes(q) ||
+                                       (x?.customer_platform_id||'').toLowerCase().includes(q) ||
+                                       (x?.last_user_message||'').toLowerCase().includes(q);
+                            })" :key="c?.id || $index">
+                                <div class="p-4 hover:bg-rc-card-hover/30 cursor-pointer transition-colors" :class="selectedConvId === c?.id ? 'bg-rc-card-hover/40 border-l-2 border-neon-purple' : ''" @click="loadConversationMessages(c?.id)">
                                     <div class="flex items-center gap-3">
-                                        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-rc-card-hover to-rc-card border border-rc-border/40 flex items-center justify-center text-xs font-bold text-gray-400 flex-shrink-0" x-text="(c.customer_name || c.customer_platform_id || '?')[0].toUpperCase()"></div>
+                                        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-rc-card-hover to-rc-card border border-rc-border/40 flex items-center justify-center text-xs font-bold text-gray-400 flex-shrink-0" x-text="(c?.customer_name || c?.customer_platform_id || '?')[0].toUpperCase()"></div>
                                         <div class="flex-1 min-w-0">
                                             <div class="flex items-center justify-between">
-                                                <span class="text-sm font-medium text-gray-200 truncate" x-text="c.customer_name || c.customer_platform_id || 'Unknown'"></span>
-                                                <span class="text-[10px] font-mono text-gray-500 flex-shrink-0" x-text="formatDate(c.updated_at)"></span>
+                                                <span class="text-sm font-medium text-gray-200 truncate" x-text="c?.customer_name || c?.customer_platform_id || 'Unknown'"></span>
+                                                <span class="text-[10px] font-mono text-gray-500 flex-shrink-0" x-text="formatDate(c?.updated_at)"></span>
                                             </div>
                                             <div class="flex items-center gap-2 mt-1">
-                                                <span class="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-full border flex-shrink-0" :class="channelStyle(c.channel).text + ' ' + channelStyle(c.channel).border">
-                                                    <i :class="channelStyle(c.channel).icon + ' text-[9px]'"></i>
-                                                    <span x-text="c.channel.charAt(0).toUpperCase() + c.channel.slice(1)"></span>
+                                                <span class="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-full border flex-shrink-0" :class="channelStyle(c?.channel).text + ' ' + channelStyle(c?.channel).border">
+                                                    <i :class="channelStyle(c?.channel).icon + ' text-[9px]'"></i>
+                                                    <span x-text="c?.channel ? c.channel.charAt(0).toUpperCase() + c.channel.slice(1) : '—'"></span>
                                                 </span>
-                                                <span class="text-[10px] text-gray-500 truncate" x-text="c.last_user_message || c.last_ai_reply || 'No messages'"></span>
-                                                <span x-show="c.message_count > 1" class="text-[9px] font-mono text-gray-600 flex-shrink-0" x-text="'(' + c.message_count + ' msgs)'"></span>
+                                                <span class="text-[10px] text-gray-500 truncate" x-text="c?.last_user_message || c?.last_ai_reply || 'No messages'"></span>
+                                                <span x-show="c?.message_count > 1" class="text-[9px] font-mono text-gray-600 flex-shrink-0" x-text="'(' + c?.message_count + ' msgs)'"></span>
                                             </div>
                                         </div>
                                     </div>
