@@ -502,8 +502,8 @@
                 token: localStorage.getItem('rc_agent_token') || '',
                 user: JSON.parse(localStorage.getItem('rc_agent_user') || 'null'),
 
-                // Navigation
-                activeTab: 'dashboard',
+                // Navigation — read ?view= param from URL
+                activeTab: new URLSearchParams(window.location.search).get('view') || 'dashboard',
                 navItems: [
                     { id: 'dashboard', icon: '📊', label: 'لوحة التحكم' },
                     { id: 'stores',    icon: '🛍️', label: 'المتاجر' },
@@ -542,6 +542,9 @@
                         window.location.href = '/';
                         return;
                     }
+
+                    const urlView = new URLSearchParams(window.location.search).get('view');
+                    if (urlView) this.activeTab = urlView;
 
                     await Promise.all([
                         this.loadStores(),
