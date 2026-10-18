@@ -148,7 +148,9 @@
             if (this.chatPlatform) params.set('platform', this.chatPlatform);
             const res = await fetch(`/api/messages?${params}`);
             const data = await res.json();
-            this.conversations = (data.conversations || []).map(c => ({
+            // API may return Array directly or Object with conversations/messages/data key
+            const raw = Array.isArray(data) ? data : (data.conversations || data.messages || data.data || []);
+            this.conversations = raw.map(c => ({
                 ...c,
                 customer_name: c?.customer_name || null,
                 customer_platform_id: c?.customer_platform_id || null,
