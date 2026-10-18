@@ -318,12 +318,12 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <template x-for="conv in conversations" :key="conv.id">
+                            <template x-for="(conv, idx) in conversations" :key="conv?.id || idx">
                                 <tr>
-                                    <td x-text="conv.customer_name || 'غير معروف'"></td>
-                                    <td><span class="channel-badge" :class="conv.channel" x-text="conv.channel"></span></td>
-                                    <td style="color:#888; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" x-text="conv.last_message || conv.last_reply || '—'"></td>
-                                    <td style="color:#666; font-size:12px;" x-text="conv.updated_at ? new Date(conv.updated_at).toLocaleString('ar-DZ') : '—'"></td>
+                                    <td x-text="conv?.customer_name || 'غير معروف'"></td>
+                                    <td><span class="channel-badge" :class="conv?.channel || ''" x-text="conv?.channel || '—'"></span></td>
+                                    <td style="color:#888; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" x-text="conv?.last_message || conv?.last_reply || '—'"></td>
+                                    <td style="color:#666; font-size:12px;" x-text="conv?.updated_at ? new Date(conv.updated_at).toLocaleString('ar-DZ') : '—'"></td>
                                 </tr>
                             </template>
                             <tr x-show="conversations.length === 0">
@@ -348,16 +348,16 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <template x-for="store in stores" :key="store.id">
+                            <template x-for="(store, idx) in stores" :key="store?.id || idx">
                                 <tr>
-                                    <td x-text="store.shopify_domain"></td>
+                                    <td x-text="store?.shopify_domain || '—'"></td>
                                     <td>
-                                        <span class="status-dot" :class="store.is_connected ? 'online' : 'offline'"></span>
-                                        <span x-text="store.is_connected ? 'متصل' : 'غير متصل'"></span>
+                                        <span class="status-dot" :class="store?.is_connected ? 'online' : 'offline'"></span>
+                                        <span x-text="store?.is_connected ? 'متصل' : 'غير متصل'"></span>
                                     </td>
-                                    <td style="color:#666; font-size:12px;" x-text="store.last_sync_at ? new Date(store.last_sync_at).toLocaleString('ar-DZ') : '—'"></td>
+                                    <td style="color:#666; font-size:12px;" x-text="store?.last_sync_at ? new Date(store.last_sync_at).toLocaleString('ar-DZ') : '—'"></td>
                                     <td>
-                                        <button class="btn-sm green" @click="syncStore(store.id)" x-text="syncing === store.id ? '...' : '🔄 مزامنة'"></button>
+                                        <button class="btn-sm green" @click="syncStore(store?.id)" x-text="syncing === store?.id ? '...' : '🔄 مزامنة'"></button>
                                     </td>
                                 </tr>
                             </template>
@@ -496,6 +496,14 @@
     </div>
 
     <script>
+        // Log Alpine errors to console for debugging
+        document.addEventListener('alpine:init', () => {
+            console.log('[Alpine] Initialized');
+        });
+        document.addEventListener('alpine:error', (e) => {
+            console.error('[Alpine Error]', e.detail);
+        });
+
         function dashboardApp() {
             return {
                 // Auth
@@ -546,10 +554,8 @@
                     const urlView = new URLSearchParams(window.location.search).get('view');
                     if (urlView) this.activeTab = urlView;
 
-                    await Promise.all([
-                        this.loadStores(),
-                        this.loadConversations(),
-                    ]);
+                    await this.loadStores();
+                    await this.loadConversations();
 
                     this.loading = false;
                 },
@@ -557,28 +563,43 @@
                 async loadStores() {
                     try {
                         const resp = await this.api.get('/api/stores');
-                        this.stores = resp.data.stores || [];
-                        this.stats.connected_stores = this.stores.filter(s => s.is_connected).length;
+                        const data = resp?.data || {};
+                        this.stores = (data.stores || []).map(s => ({
+                            ...s,
+                            shopify_domain: s?.shopify_domain || '—',
+                            is_connected: !!s?.is_connected,
+                            last_sync_at: s?.last_sync_at || null,
+                            id: s?.id
+                        }));
+                        this.stats.connected_stores = this.stores.filter(s => s?.is_connected).length;
                     } catch (err) {
-                        console.error('Stores error:', err);
-                        if (err.response?.status === 401) this.logout();
+                        console.error('[Alpine] loadStores error:', err);
+                        if (err?.response?.status === 401) this.logout();
                     }
                 },
 
                 async loadConversations() {
                     try {
-                        if (this.stores.length === 0) return;
-                        const storeId = this.stores[0].id;
+                        if (!this.stores || this.stores.length === 0) return;
+                        const storeId = this.stores[0]?.id;
+                        if (!storeId) return;
                         const resp = await this.api.get(`/api/conversations/${storeId}?limit=20`);
-                        this.conversations = resp.data.conversations || [];
-                        this.stats.total_conversations = resp.data.total || 0;
-                        this.stats.monthly_messages = this.conversations.reduce((s, c) => s + (c.message_count || 0), 0);
-                        this.stats.active_channels = [...new Set(this.conversations.map(c => c.channel))].length;
+                        const data = resp?.data || {};
+                        this.conversations = (data.conversations || []).map(c => ({
+                            ...c,
+                            customer_name: c?.customer_name || null,
+                            channel: c?.channel || '—',
+                            last_message: c?.last_message || null,
+                            last_reply: c?.last_reply || null,
+                            updated_at: c?.updated_at || null
+                        }));
+                        this.stats.total_conversations = data.total || 0;
+                        this.stats.monthly_messages = this.conversations.reduce((s, c) => s + (c?.message_count || 0), 0);
+                        this.stats.active_channels = [...new Set(this.conversations.map(c => c?.channel || '—'))].length;
 
-                        // Also load AI settings
                         this.loadSettings(storeId);
                     } catch (err) {
-                        console.error('Conversations error:', err);
+                        console.error('[Alpine] loadConversations error:', err);
                     }
                 },
 
